@@ -9,7 +9,7 @@ export async function alertByEmail(subject: string, body: string): Promise<void>
     await nodemailer.createTransport(config.smtpUrl).sendMail({
       to: config.alertEmail,
       from: config.alertEmail,
-      subject: `[zalo-digest] ${subject}`,
+      subject: `[zalo-digest:${config.userName}] ${subject}`,
       text: body,
     });
   } catch (err) {

@@ -1,8 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { getKv, groupName, messagesBetween, setKv, type StoredMessage } from "./db.js";
+import { complete } from "./llm.js";
 
-const client = new Anthropic();
 const LAST_REPORT_KEY = "last_report_to_ts";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -20,7 +19,22 @@ Cấu trúc:
    - Số liệu được báo cáo (nếu có): liệt kê theo người/chỉ số, giữ nguyên đơn vị
 3. Các nhóm chỉ có trò chuyện xã giao: gom lại một dòng "Không có gì quan trọng: ...".
 
-Ngắn gọn, chỉ nêu điều có trong log, không suy đoán. Nếu một thông tin mơ hồ (ví dụ hạn "thứ 6" không rõ tuần nào), ghi đúng như trong log.`;
+Chỉ nêu điều có trong log, không suy đoán. Nếu một thông tin mơ hồ (ví dụ hạn "thứ 6" không rõ tuần nào), ghi đúng như trong log.`;
+
+const STYLE_PROMPTS = {
+  short: "Độ dài: ngắn gọn, mỗi nhóm tối đa 5 gạch đầu dòng, chỉ giữ điều thật sự quan trọng.",
+  detailed: "Độ dài: chi tiết, nêu đủ các điểm thảo luận chính, ai nói gì nếu liên quan đến quyết định.",
+};
+
+function systemPrompt(): string {
+  const parts = [SYSTEM_PROMPT, STYLE_PROMPTS[config.reportStyle]];
+  if (config.userProfile) {
+    parts.push(
+      `Thông tin về chủ tài khoản, dùng để chọn điều gì quan trọng với họ và đặt lên đầu:\n${config.userProfile}`,
+    );
+  }
+  return parts.join("\n\n");
+}
 
 function formatTime(ts: number): string {
   return new Intl.DateTimeFormat("vi-VN", {
@@ -60,28 +74,6 @@ function buildTranscript(messages: StoredMessage[]): string {
     .join("\n\n");
 }
 
-async function summarize(transcript: string): Promise<string> {
-  const response = await client.beta.messages.create({
-    model: config.summaryModel,
-    max_tokens: 16000,
-    output_config: { effort: "medium" },
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: transcript }],
-  });
-
-  if (response.stop_reason === "refusal") {
-    throw new Error(`Model refused to summarize: ${JSON.stringify(response.stop_details)}`);
-  }
-  const text = response.content
-    .flatMap((block) => (block.type === "text" ? [block.text] : []))
-    .join("\n")
-    .trim();
-  if (!text) throw new Error(`Empty summary (stop_reason: ${response.stop_reason})`);
-  return text;
-}
-
 /**
  * Build the report for messages since the last report (or the past 24h on first run).
  * Call `markReported` only after the report is delivered, so a failed send is retried next time.
@@ -96,6 +88,6 @@ export async function buildReport(now = Date.now()): Promise<{ text: string; mar
     return { text: `${header}\n\nKhông có tin nhắn mới trong các nhóm đang theo dõi.`, markReported };
   }
 
-  const summary = await summarize(buildTranscript(messages));
+  const summary = await complete(systemPrompt(), buildTranscript(messages));
   return { text: `${header}\n\n${summary}`, markReported };
 }

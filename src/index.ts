@@ -12,7 +12,7 @@ if (!config.trackedGroupIds.size) {
 
 const api = await login();
 await refreshGroupNames(api);
-console.log(`[main] Logged in as ${api.getOwnId()}, tracking ${config.trackedGroupIds.size} group(s)`);
+console.log(`[main] ${config.userName}: logged in as ${api.getOwnId()}, ${config.llm.provider}/${config.llm.model}, tracking ${config.trackedGroupIds.size} group(s)`);
 
 startRecorder(api, async (reason) => {
   await alertByEmail("Mất kết nối Zalo", `${reason}\nProcess sẽ thoát để pm2 khởi động lại.`);

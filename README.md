@@ -1,10 +1,10 @@
 # zalo-digest
 
-Ghi lại tin nhắn từ các nhóm Zalo đã chọn và gửi báo cáo tóm tắt mỗi sáng vào **Cloud của tôi**.
+Ghi lại tin nhắn từ các nhóm Zalo đã chọn và gửi báo cáo tóm tắt mỗi sáng vào **Cloud của tôi**. Một VPS chạy được cho nhiều người, mỗi người có cấu hình riêng.
 
-> ⚠️ Dùng thư viện không chính thức `zca-js` (giả lập Zalo Web). Việc này vi phạm điều khoản của Zalo, nên **tài khoản có thể bị khóa**. Bạn tự chịu rủi ro.
+> ⚠️ Dùng thư viện không chính thức `zca-js` (giả lập Zalo Web). Việc này vi phạm điều khoản của Zalo, nên **tài khoản có thể bị khóa**. Người dùng phải được báo trước và đồng ý.
 
-Giai đoạn 1 (bản hiện tại): listener, lưu SQLite, báo cáo sáng.
+Giai đoạn 1 (bản hiện tại): listener, lưu SQLite, báo cáo sáng cá nhân hóa, chạy cho nhiều người.
 Các giai đoạn sau: trích xuất task và nhắc deadline → tổng hợp số liệu → MCP server.
 
 ## Cài đặt trên VPS
@@ -13,31 +13,57 @@ Yêu cầu Node.js >= 22.13 (dùng `node:sqlite` có sẵn, không cần build n
 
 ```bash
 npm ci
-cp .env.example .env    # điền ANTHROPIC_API_KEY
-npm run groups          # lần đầu: quét QR ở data/qr.png bằng app Zalo, rồi in danh sách nhóm kèm ID
-# chép ID nhóm cần theo dõi vào TRACKED_GROUP_IDS trong .env
-
 npm i -g pm2
-pm2 start ecosystem.config.cjs && pm2 save && pm2 startup
-pm2 logs zalo-digest
 ```
 
-Để lấy file QR từ VPS về máy: `scp vps:zalo-digest/data/qr.png .`. QR hết hạn sau khoảng 1 phút, sau đó tool tự tạo mã mới.
+## Thêm một người
+
+```bash
+npm run add-user -- an                 # tạo users/an/.env từ mẫu
+nano users/an/.env                     # điền API key, USER_PROFILE
+USER_DIR=users/an npm run groups       # người đó quét QR ở users/an/data/qr.png, rồi in danh sách nhóm
+nano users/an/.env                     # điền TRACKED_GROUP_IDS
+pm2 start ecosystem.config.cjs --only zalo-an && pm2 save
+```
+
+Lần đầu cài thêm `pm2 startup` để tự chạy lại khi VPS khởi động. `ecosystem.config.cjs` tự tạo một process `zalo-<tên>` cho mỗi thư mục `users/<tên>/` có file `.env`.
+
+Để lấy file QR về máy: `scp vps:zalo-digest/users/an/data/qr.png .`, rồi gửi cho người đó quét. QR hết hạn sau khoảng 1 phút, sau đó tool tự tạo mã mới.
+
+## Cá nhân hóa (trong `users/<tên>/.env`)
+
+| Biến | Ý nghĩa |
+|---|---|
+| `USER_PROFILE` | Người đó là ai và quan tâm gì. Báo cáo sẽ ưu tiên theo đây |
+| `REPORT_STYLE` | `short` (mặc định) hoặc `detailed` |
+| `REPORT_CRON` | Giờ gửi báo cáo, mặc định `0 8 * * *` |
+| `TRACKED_GROUP_IDS` | Các nhóm cần theo dõi |
+| `LLM_PROVIDER` | `gemini` (mặc định) hoặc `claude` |
+| `LLM_MODEL` | Mặc định `gemini-flash-latest` / `claude-haiku-4-5` |
+
+### Chọn model
+
+- **Gemini free tier:** miễn phí, hạn mức dư cho vài báo cáo mỗi ngày. **Ở bản free, Google có thể dùng nội dung gửi lên (tức là tin nhắn trong group) để cải thiện sản phẩm.** Mỗi người nên tạo key riêng tại Google AI Studio.
+- **Claude API:** khoảng 0,6 USD/người/tháng với Haiku. Dữ liệu không bị dùng để huấn luyện model.
+- Gói sub Claude (Pro/Max) **không** dùng được làm backend cho bot (trái điều khoản).
 
 ## Lệnh
 
+Mọi lệnh đều cần thêm `USER_DIR=users/<tên>` ở đầu để chọn người.
+
 | Lệnh | Tác dụng |
 |---|---|
-| `npm start` | Chạy listener và lịch báo cáo (dùng qua pm2) |
-| `npm run groups` | Liệt kê nhóm kèm ID |
+| `npm run add-user -- <tên>` | Tạo cấu hình cho một người mới |
+| `npm run groups` | Liệt kê nhóm kèm ID (đăng nhập QR nếu chưa có) |
 | `npm run report` | Tạo báo cáo ngay và in ra màn hình, không gửi |
 | `npm run report -- --send` | Tạo báo cáo và gửi vào Cloud của tôi |
 
+⚠️ Nên dừng process pm2 của người đó trước khi chạy `groups` hoặc `--send`. Hai phiên đăng nhập cùng lúc có thể làm Zalo ngắt phiên đang chạy (chưa kiểm chứng).
+
 ## Lưu ý vận hành
 
-- **Đừng mở Zalo Web trên trình duyệt.** Mỗi tài khoản chỉ có một kết nối web listener; mở Zalo Web sẽ ngắt listener. Dùng app điện thoại bình thường. Zalo PC thì cần thử thực tế.
-- Khi mất kết nối, process sẽ gửi email cảnh báo (nếu đã cấu hình `SMTP_URL`) rồi thoát để pm2 khởi động lại. Nếu cookie hết hạn, cần quét lại QR.
+- **Đừng mở Zalo Web trên trình duyệt.** Mở Zalo Web sẽ ngắt listener. App điện thoại thì không sao. Zalo PC cần thử thực tế.
+- Khi mất kết nối, process gửi email cảnh báo (nếu đã cấu hình `SMTP_URL`) rồi thoát để pm2 khởi động lại. Nếu cookie hết hạn, cần quét lại QR.
 - Chỉ ghi lại tin nhắn **từ lúc listener bắt đầu chạy**; không lấy lịch sử cũ.
 - Báo cáo bao gồm tin từ lần báo cáo trước tới hiện tại, lần đầu là 24h. Nếu gửi thất bại, lần sau sẽ gộp luôn phần bị lỡ.
-- `data/credentials.json` chứa cookie đăng nhập Zalo, tương đương mật khẩu. Không commit, không chia sẻ.
-- Nội dung tin nhắn của các nhóm được lưu trên VPS và gửi tới Claude API để tóm tắt.
+- `users/<tên>/data/credentials.json` là cookie Zalo của người đó, tương đương mật khẩu. Hạn chế người có quyền vào VPS; không commit thư mục `users/`.

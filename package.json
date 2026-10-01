@@ -10,10 +10,12 @@
     "start": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/index.ts",
     "groups": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/cli/list-groups.ts",
     "report": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/cli/report-now.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "add-user": "tsx src/cli/add-user.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
+    "@google/genai": "^2.25.0",
     "dotenv": "^18.0.5",
     "node-cron": "^4.6.0",
     "nodemailer": "^10.0.13",
