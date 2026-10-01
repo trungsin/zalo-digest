@@ -106,6 +106,44 @@ npm ci
 npm i -g pm2
 ```
 
+## Triển khai lên VPS với Cloudflare Tunnel
+
+Cloudflare Tunnel đưa MCP server ra internet qua HTTPS mà không cần mở port hay cài Caddy. Nếu dùng tunnel thì bỏ qua phần Caddy ở "Cách 2" bên dưới.
+
+**1. Cài đặt (một lần).** SSH vào VPS rồi chạy:
+
+```bash
+git clone https://github.com/trungsin/zalo-digest ~/zalo-digest
+bash ~/zalo-digest/deploy/setup-vps.sh
+```
+
+Script cài Node.js 22, pm2, cloudflared và chạy `npm ci`. Chạy lại script bất cứ lúc nào để cập nhật code mới. Repo private nên `git clone` sẽ hỏi username GitHub và một **Personal Access Token** (không phải mật khẩu GitHub). Tạo token tại GitHub → Settings → Developer settings, chỉ cấp quyền đọc repo này.
+
+**2. Thêm từng người**, theo phần "Thêm một người" bên dưới. Trong `.env` của mỗi người, đặt `MCP_TOKEN` (tạo bằng `openssl rand -hex 32`) và một `MCP_PORT` riêng (3101, 3102...).
+
+Để lấy QR về máy: `scp -P <port> <user>@<vps>:zalo-digest/users/<tên>/data/qr.png .`
+
+**3. Tạo tunnel** trên Cloudflare dashboard (domain phải đang dùng DNS của Cloudflare):
+1. Vào Zero Trust → Networks → Tunnels → Create a tunnel → chọn Cloudflared, đặt tên `zalo-digest`.
+2. Copy token trong lệnh cài đặt mà Cloudflare hiển thị, rồi chạy trên VPS: `sudo cloudflared service install <TOKEN>`
+3. Thêm public hostname (ở giao diện mới có thể tên là "routes"), mỗi người một dòng:
+
+   | Hostname | Path | Service |
+   |---|---|---|
+   | `zalo.datxanhmientrung.ai` | `^/an/` | `http://localhost:3101` |
+   | `zalo.datxanhmientrung.ai` | `^/binh/` | `http://localhost:3102` |
+
+4. URL connector của người đó là `https://zalo.datxanhmientrung.ai/an/mcp/<MCP_TOKEN>`.
+
+**Kiểm tra nhanh:** gửi request không kèm token phải nhận lỗi 401.
+```bash
+curl -i -X POST https://zalo.datxanhmientrung.ai/an/mcp
+```
+
+**Bảo mật VPS:**
+- Dùng SSH key thay cho mật khẩu và tắt đăng nhập bằng mật khẩu (`PasswordAuthentication no`).
+- Tunnel chỉ mở các port MCP qua HTTPS. Các port 31xx vẫn chỉ nghe trên `127.0.0.1`, không lộ ra ngoài.
+
 ## Thêm một người
 
 ```bash

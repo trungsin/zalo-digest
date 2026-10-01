@@ -271,7 +271,9 @@ function tokenMatches(given: string | undefined, expected: string): boolean {
 export function startMcpHttp(port: number, token: string): http.Server {
   const httpServer = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    const match = url.pathname.match(/^\/mcp(?:\/([^/]+))?\/?$/);
+    // An optional leading segment ("/an/mcp/...") lets one domain route to several people's ports;
+    // Cloudflare Tunnel path rules forward the path unchanged.
+    const match = url.pathname.match(/^(?:\/[^/]+)?\/mcp(?:\/([^/]+))?\/?$/);
     if (!match) {
       res.writeHead(404).end();
       return;
