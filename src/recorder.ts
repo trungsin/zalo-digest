@@ -1,6 +1,7 @@
 import { ThreadType, type API, type GroupMessage, type Message } from "zca-js";
 import { config } from "./config.js";
-import { insertMessage, upsertGroup } from "./db.js";
+import { insertMessage, setKv, upsertGroup } from "./db.js";
+import { handleCommand, OWN_NAME_KEY } from "./tasks.js";
 
 /** Turn a Zalo message payload into readable text for the summarizer. */
 function messageText(msg: GroupMessage): string {
@@ -19,6 +20,8 @@ function record(api: API, message: Message): void {
 
   const ownId = api.getOwnId();
   const { data } = message;
+  // Lets the task extractor recognize the owner when others address them by name.
+  if (message.isSelf && data.dName) setKv(OWN_NAME_KEY, data.dName);
   insertMessage({
     msg_id: data.msgId,
     group_id: message.threadId,
@@ -45,7 +48,10 @@ export async function refreshGroupNames(api: API): Promise<void> {
 export function startRecorder(api: API, onSessionLost: (reason: string) => void): void {
   const { listener } = api;
 
-  listener.on("message", (message) => record(api, message));
+  listener.on("message", (message) => {
+    record(api, message);
+    handleCommand(api, message).catch((err) => console.error("[command] failed:", err));
+  });
   listener.on("old_messages", (messages) => messages.forEach((m) => record(api, m)));
   listener.on("connected", () => console.log("[listener] connected"));
   listener.on("error", (err) => console.error("[listener] error:", err));

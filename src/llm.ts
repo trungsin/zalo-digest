@@ -2,13 +2,31 @@ import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import { config } from "./config.js";
 
+type JsonSchema = Record<string, unknown>;
+
 /** One-shot text completion with the provider chosen in config. */
 export async function complete(system: string, user: string): Promise<string> {
-  const text = config.llm.provider === "claude" ? await completeClaude(system, user) : await completeGemini(system, user);
-  return text.trim();
+  return (await call(system, user)).trim();
 }
 
-async function completeClaude(system: string, user: string): Promise<string> {
+/**
+ * Completion constrained to a JSON schema. Keep schemas to the subset both providers accept:
+ * objects with all fields required and additionalProperties: false, strings, integers, enums, arrays.
+ */
+export async function completeJson<T>(system: string, user: string, schema: JsonSchema): Promise<T> {
+  const text = await call(system, user, schema);
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`Model returned invalid JSON: ${text.slice(0, 500)}`);
+  }
+}
+
+function call(system: string, user: string, schema?: JsonSchema): Promise<string> {
+  return config.llm.provider === "claude" ? callClaude(system, user, schema) : callGemini(system, user, schema);
+}
+
+async function callClaude(system: string, user: string, schema?: JsonSchema): Promise<string> {
   if (!config.llm.anthropicApiKey) throw new Error("ANTHROPIC_API_KEY is not set");
   const client = new Anthropic({ apiKey: config.llm.anthropicApiKey });
 
@@ -17,10 +35,14 @@ async function completeClaude(system: string, user: string): Promise<string> {
     max_tokens: 16000,
     system,
     messages: [{ role: "user", content: user }],
+    ...(schema && { output_config: { format: { type: "json_schema", schema } } }),
   });
 
   if (response.stop_reason === "refusal") {
     throw new Error(`Claude refused: ${JSON.stringify(response.stop_details)}`);
+  }
+  if (response.stop_reason === "max_tokens") {
+    throw new Error("Claude response truncated (max_tokens)");
   }
   const text = response.content
     .flatMap((block) => (block.type === "text" ? [block.text] : []))
@@ -29,14 +51,17 @@ async function completeClaude(system: string, user: string): Promise<string> {
   return text;
 }
 
-async function completeGemini(system: string, user: string): Promise<string> {
+async function callGemini(system: string, user: string, schema?: JsonSchema): Promise<string> {
   if (!config.llm.geminiApiKey) throw new Error("GEMINI_API_KEY is not set");
   const ai = new GoogleGenAI({ apiKey: config.llm.geminiApiKey });
 
   const response = await ai.models.generateContent({
     model: config.llm.model,
     contents: user,
-    config: { systemInstruction: system },
+    config: {
+      systemInstruction: system,
+      ...(schema && { responseMimeType: "application/json", responseJsonSchema: schema }),
+    },
   });
 
   const text = response.text;

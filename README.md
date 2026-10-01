@@ -4,8 +4,27 @@ Ghi lại tin nhắn từ các nhóm Zalo đã chọn và gửi báo cáo tóm t
 
 > ⚠️ Dùng thư viện không chính thức `zca-js` (giả lập Zalo Web). Việc này vi phạm điều khoản của Zalo, nên **tài khoản có thể bị khóa**. Người dùng phải được báo trước và đồng ý.
 
-Giai đoạn 1 (bản hiện tại): listener, lưu SQLite, báo cáo sáng cá nhân hóa, chạy cho nhiều người.
-Các giai đoạn sau: trích xuất task và nhắc deadline → tổng hợp số liệu → MCP server.
+Đã có: listener, lưu SQLite, báo cáo sáng cá nhân hóa, chạy cho nhiều người (giai đoạn 1); trích việc và nhắc deadline (giai đoạn 2).
+Sắp làm: tổng hợp số liệu → MCP server.
+
+## Việc & nhắc deadline
+
+- **Trích việc:** mặc định mỗi 2 giờ từ 7h đến 21h, model đọc tin mới và lưu các việc liên quan đến bạn:
+  - **việc của bạn:** được giao, hoặc bạn nhận làm.
+  - **việc bạn đang chờ:** bạn giao cho người khác, hoặc người khác hứa làm cho bạn.
+
+  Nếu chat cho thấy một việc đã xong, bị hủy hoặc đổi hạn, việc đó được cập nhật luôn. Chỉ gọi model khi có tin mới.
+- **Nhắc việc:** mỗi 15 phút kiểm tra việc sắp đến hạn (mặc định trước 2 tiếng) rồi gom vào một tin trong Cloud của tôi. Mỗi việc chỉ nhắc một lần, tối đa 5 tin/ngày, không nhắc từ 22h đến 7h.
+- **Báo cáo sáng** có thêm danh sách việc quá hạn, việc hôm nay, việc 7 ngày tới, việc chưa có hạn, và việc đang chờ người khác.
+- **Lệnh trong Cloud của tôi:**
+
+  | Gõ | Tác dụng |
+  |---|---|
+  | `viec` | Xem danh sách việc đang mở |
+  | `xong 3` hoặc `xong 3 5` | Đánh dấu việc đã xong |
+  | `huy 3` | Hủy việc |
+
+Model có thể bắt sai hoặc bỏ sót việc. Các việc được trích ra chỉ để tham khảo, không thay được việc bạn tự đọc tin.
 
 ## Cài đặt trên VPS
 

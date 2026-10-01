@@ -28,6 +28,24 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_messages_group_ts ON messages (group_id, ts);
 
+  -- kind: 'mine' = assigned to the account owner; 'delegated' = owner is waiting on someone else.
+  CREATE TABLE IF NOT EXISTS tasks (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id      TEXT NOT NULL,
+    source_msg_id TEXT NOT NULL,
+    kind          TEXT NOT NULL CHECK (kind IN ('mine', 'delegated')),
+    title         TEXT NOT NULL,
+    assignee      TEXT NOT NULL DEFAULT '',
+    due_at        INTEGER,
+    due_text      TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'cancelled')),
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL,
+    reminded_at   INTEGER,
+    UNIQUE (source_msg_id, title)
+  );
+  CREATE INDEX IF NOT EXISTS idx_tasks_status_due ON tasks (status, due_at);
+
   CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -73,6 +91,80 @@ export function messagesBetween(fromTs: number, toTs: number): StoredMessage[] {
   return db
     .prepare("SELECT * FROM messages WHERE ts >= ? AND ts < ? ORDER BY group_id, ts")
     .all(fromTs, toTs) as StoredMessage[];
+}
+
+export type StoredMessageWithRowid = StoredMessage & { rowid: number };
+
+/** Messages in insertion order after a rowid cursor (robust to late-arriving old messages). */
+export function messagesAfterRowid(rowid: number, limit: number): StoredMessageWithRowid[] {
+  return db
+    .prepare("SELECT rowid, * FROM messages WHERE rowid > ? ORDER BY rowid LIMIT ?")
+    .all(rowid, limit) as StoredMessageWithRowid[];
+}
+
+/** The last `limit` messages of a group before a rowid, oldest first — context for extraction. */
+export function messagesBeforeRowid(groupId: string, rowid: number, limit: number): StoredMessage[] {
+  const rows = db
+    .prepare("SELECT * FROM messages WHERE group_id = ? AND rowid < ? ORDER BY rowid DESC LIMIT ?")
+    .all(groupId, rowid, limit) as StoredMessage[];
+  return rows.reverse();
+}
+
+export type Task = {
+  id: number;
+  group_id: string;
+  source_msg_id: string;
+  kind: "mine" | "delegated";
+  title: string;
+  assignee: string;
+  due_at: number | null;
+  due_text: string;
+  status: "open" | "done" | "cancelled";
+  created_at: number;
+  updated_at: number;
+  reminded_at: number | null;
+};
+
+export function insertTask(t: Pick<Task, "group_id" | "source_msg_id" | "kind" | "title" | "assignee" | "due_at" | "due_text">): void {
+  const now = Date.now();
+  db.prepare(`
+    INSERT OR IGNORE INTO tasks (group_id, source_msg_id, kind, title, assignee, due_at, due_text, created_at, updated_at)
+    VALUES (:group_id, :source_msg_id, :kind, :title, :assignee, :due_at, :due_text, :now, :now)
+  `).run({ ...t, now });
+}
+
+export function updateTask(id: number, fields: Partial<Pick<Task, "status" | "due_at" | "due_text">>): boolean {
+  const current = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Task | undefined;
+  if (!current) return false;
+  const next = { ...current, ...fields };
+  // A new deadline deserves a new reminder.
+  const remindedAt = next.due_at !== current.due_at ? null : current.reminded_at;
+  db.prepare(
+    "UPDATE tasks SET status = ?, due_at = ?, due_text = ?, reminded_at = ?, updated_at = ? WHERE id = ?",
+  ).run(next.status, next.due_at, next.due_text, remindedAt, Date.now(), id);
+  return true;
+}
+
+export function openTasks(): Task[] {
+  return db
+    .prepare("SELECT * FROM tasks WHERE status = 'open' ORDER BY due_at IS NULL, due_at, id")
+    .all() as Task[];
+}
+
+export function getTask(id: number): Task | undefined {
+  return db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Task | undefined;
+}
+
+/** Open tasks with a deadline before `ts` that haven't been reminded yet. */
+export function tasksToRemind(ts: number): Task[] {
+  return db
+    .prepare("SELECT * FROM tasks WHERE status = 'open' AND reminded_at IS NULL AND due_at IS NOT NULL AND due_at <= ? ORDER BY due_at")
+    .all(ts) as Task[];
+}
+
+export function markReminded(ids: number[], ts: number): void {
+  const stmt = db.prepare("UPDATE tasks SET reminded_at = ? WHERE id = ?");
+  for (const id of ids) stmt.run(ts, id);
 }
 
 export function getKv(key: string): string | undefined {

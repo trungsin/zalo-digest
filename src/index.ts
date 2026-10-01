@@ -3,6 +3,7 @@ import { alertByEmail } from "./alert.js";
 import { config } from "./config.js";
 import { refreshGroupNames, startRecorder } from "./recorder.js";
 import { buildReport } from "./report.js";
+import { extractTasks, sendReminders } from "./tasks.js";
 import { login, sendToSelf } from "./zalo.js";
 
 if (!config.trackedGroupIds.size) {
@@ -36,3 +37,16 @@ cron.schedule(
   { timezone: config.timezone, noOverlap: true },
 );
 console.log(`[main] Report scheduled: "${config.reportCron}" (${config.timezone})`);
+
+cron.schedule(
+  config.extractCron,
+  () => extractTasks().catch((err) => console.error("[tasks] extraction failed:", err)),
+  { timezone: config.timezone, noOverlap: true },
+);
+
+// Reminders only read the DB (no LLM call), so they're cheap to run often.
+cron.schedule(
+  "*/15 * * * *",
+  () => sendReminders(api).catch((err) => console.error("[tasks] reminders failed:", err)),
+  { timezone: config.timezone, noOverlap: true },
+);

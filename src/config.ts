@@ -51,6 +51,14 @@ export const config = {
   userProfile: process.env.USER_PROFILE?.trim() ?? "",
   reportStyle: (process.env.REPORT_STYLE === "detailed" ? "detailed" : "short") as "short" | "detailed",
 
+  // Task extraction and reminders.
+  // Every 2h in working hours by default: at most ~8 LLM calls/day, to stay within free-tier daily limits.
+  extractCron: process.env.EXTRACT_CRON ?? "5 7-21/2 * * *",
+  remindBeforeMin: Number(process.env.REMIND_BEFORE_MIN ?? 120),
+  maxRemindersPerDay: Number(process.env.MAX_REMINDERS_PER_DAY ?? 5),
+  // Hours [start, end) when no reminders are sent, e.g. "22-7".
+  quietHours: (process.env.QUIET_HOURS ?? "22-7").split("-").map(Number) as [number, number],
+
   // Optional: email alert when the Zalo session dies (we can't alert via Zalo then).
   smtpUrl: process.env.SMTP_URL,
   alertEmail: process.env.ALERT_EMAIL,
