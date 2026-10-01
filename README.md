@@ -4,8 +4,24 @@ Ghi lại tin nhắn từ các nhóm Zalo đã chọn và gửi báo cáo tóm t
 
 > ⚠️ Dùng thư viện không chính thức `zca-js` (giả lập Zalo Web). Việc này vi phạm điều khoản của Zalo, nên **tài khoản có thể bị khóa**. Người dùng phải được báo trước và đồng ý.
 
-Đã có: listener, lưu SQLite, báo cáo sáng cá nhân hóa, chạy cho nhiều người (giai đoạn 1); trích việc và nhắc deadline (giai đoạn 2).
-Sắp làm: tổng hợp số liệu → MCP server.
+Đã có: listener, lưu SQLite, báo cáo sáng cá nhân hóa, chạy cho nhiều người (giai đoạn 1); trích việc và nhắc deadline (giai đoạn 2); tổng hợp số liệu (giai đoạn 3).
+Sắp làm: MCP server.
+
+## Số liệu
+
+Số liệu được trích **cùng lượt** với việc trích task, nên không tốn thêm request tới model.
+
+- **Model chỉ trích số:** chỉ số (tên chuẩn, tái dùng tên đã có trong nhóm), người báo cáo, giá trị, đơn vị (tiền quy về triệu đồng) và ngày mà số liệu thuộc về. Nếu ai đó đính chính ("em nhầm, DS 130tr") thì số mới ghi đè số cũ.
+- **Phép tính do code làm:** tổng (ưu tiên số "Tổng" do người trong nhóm báo, nếu có), so với kỳ trước, và lũy kế tháng. Chỉ số không cộng dồn được (%, tồn kho...) thì chỉ hiển thị, không cộng.
+- **Báo cáo sáng** có mục SỐ LIỆU, ví dụ:
+  ```
+  doanh số (triệu đồng) · 02/10: Lan 120 · Minh 95 → tổng 215 (01/10: 180, +19%) · lũy kế T10: 395
+  ```
+- **Lệnh trong Cloud:** gõ `solieu` để xem lũy kế tháng theo từng người.
+- **Xuất CSV:** `USER_DIR=users/<tên> npm run export-metrics` tạo file `data/metrics.csv`, mở được bằng Excel, có kèm tin gốc để đối chiếu.
+- `METRIC_HINTS` trong `.env` dùng để khai báo cách viết tắt riêng của nhóm.
+
+Đây là số do model đọc từ tin nhắn tự do, có thể sai. Khi cần dùng số chính thức, hãy đối chiếu với cột "tin gốc" trong file CSV.
 
 ## Việc & nhắc deadline
 
@@ -23,6 +39,7 @@ Sắp làm: tổng hợp số liệu → MCP server.
   | `viec` | Xem danh sách việc đang mở |
   | `xong 3` hoặc `xong 3 5` | Đánh dấu việc đã xong |
   | `huy 3` | Hủy việc |
+  | `solieu` | Số liệu lũy kế tháng |
 
 Model có thể bắt sai hoặc bỏ sót việc. Các việc được trích ra chỉ để tham khảo, không thay được việc bạn tự đọc tin.
 
@@ -76,6 +93,7 @@ Mọi lệnh đều cần thêm `USER_DIR=users/<tên>` ở đầu để chọn 
 | `npm run groups` | Liệt kê nhóm kèm ID (đăng nhập QR nếu chưa có) |
 | `npm run report` | Tạo báo cáo ngay và in ra màn hình, không gửi |
 | `npm run report -- --send` | Tạo báo cáo và gửi vào Cloud của tôi |
+| `npm run export-metrics` | Xuất số liệu ra CSV |
 
 ⚠️ Nên dừng process pm2 của người đó trước khi chạy `groups` hoặc `--send`. Hai phiên đăng nhập cùng lúc có thể làm Zalo ngắt phiên đang chạy (chưa kiểm chứng).
 

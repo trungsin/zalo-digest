@@ -1,7 +1,8 @@
 import { ThreadType, type API, type GroupMessage, type Message } from "zca-js";
 import { config } from "./config.js";
 import { insertMessage, setKv, upsertGroup } from "./db.js";
-import { handleCommand, OWN_NAME_KEY } from "./tasks.js";
+import { OWN_NAME_KEY } from "./extract.js";
+import { handleCommand } from "./tasks.js";
 
 /** Turn a Zalo message payload into readable text for the summarizer. */
 function messageText(msg: GroupMessage): string {

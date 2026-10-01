@@ -3,7 +3,8 @@ import { alertByEmail } from "./alert.js";
 import { config } from "./config.js";
 import { refreshGroupNames, startRecorder } from "./recorder.js";
 import { buildReport } from "./report.js";
-import { extractTasks, sendReminders } from "./tasks.js";
+import { extractNew } from "./extract.js";
+import { sendReminders } from "./tasks.js";
 import { login, sendToSelf } from "./zalo.js";
 
 if (!config.trackedGroupIds.size) {
@@ -40,7 +41,7 @@ console.log(`[main] Report scheduled: "${config.reportCron}" (${config.timezone}
 
 cron.schedule(
   config.extractCron,
-  () => extractTasks().catch((err) => console.error("[tasks] extraction failed:", err)),
+  () => extractNew().catch((err) => console.error("[extract] failed:", err)),
   { timezone: config.timezone, noOverlap: true },
 );
 

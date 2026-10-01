@@ -11,7 +11,8 @@
     "groups": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/cli/list-groups.ts",
     "report": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/cli/report-now.ts",
     "typecheck": "tsc --noEmit",
-    "add-user": "tsx src/cli/add-user.ts"
+    "add-user": "tsx src/cli/add-user.ts",
+    "export-metrics": "tsx src/cli/export-metrics.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

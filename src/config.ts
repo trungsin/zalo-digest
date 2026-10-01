@@ -51,7 +51,10 @@ export const config = {
   userProfile: process.env.USER_PROFILE?.trim() ?? "",
   reportStyle: (process.env.REPORT_STYLE === "detailed" ? "detailed" : "short") as "short" | "detailed",
 
-  // Task extraction and reminders.
+  // Group-specific shorthand for figures, e.g. "DS = doanh số; KH = khách hàng mới".
+  metricHints: process.env.METRIC_HINTS?.trim() ?? "",
+
+  // Task/metric extraction and reminders.
   // Every 2h in working hours by default: at most ~8 LLM calls/day, to stay within free-tier daily limits.
   extractCron: process.env.EXTRACT_CRON ?? "5 7-21/2 * * *",
   remindBeforeMin: Number(process.env.REMIND_BEFORE_MIN ?? 120),

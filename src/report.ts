@@ -1,7 +1,9 @@
 import { config } from "./config.js";
 import { getKv, groupName, messagesBetween, setKv, type StoredMessage } from "./db.js";
 import { complete } from "./llm.js";
-import { extractTasks, taskSection } from "./tasks.js";
+import { extractNew } from "./extract.js";
+import { metricSection } from "./metrics.js";
+import { taskSection } from "./tasks.js";
 import { formatDate, formatTime } from "./time.js";
 
 const LAST_REPORT_KEY = "last_report_to_ts";
@@ -14,11 +16,11 @@ Dòng có đánh dấu (@bạn) là tin nhắc trực tiếp đến chủ tài k
 Viết báo cáo buổi sáng bằng tiếng Việt, dạng văn bản thuần (KHÔNG dùng markdown như **, #, bảng) vì sẽ gửi qua Zalo.
 Cấu trúc:
 1. "CẦN BẠN CHÚ Ý": câu hỏi đang chờ bạn trả lời, tin @bạn cần phản hồi. Bỏ mục này nếu không có.
-   (Danh sách việc và deadline được hệ thống liệt kê riêng ở cuối báo cáo, đừng lặp lại thành danh sách việc.)
+   (Danh sách việc/deadline và bảng số liệu được hệ thống liệt kê riêng ở cuối báo cáo, đừng lặp lại chúng.)
 2. Với mỗi nhóm có nội dung đáng kể, một khối:
    == Tên nhóm ==
    - Điểm chính / quyết định đã chốt
-   - Số liệu được báo cáo (nếu có): liệt kê theo người/chỉ số, giữ nguyên đơn vị
+   - Nhận xét ngắn về số liệu nếu đáng chú ý (tăng/giảm mạnh, ai chưa báo cáo), không chép lại từng con số
 3. Các nhóm chỉ có trò chuyện xã giao: gom lại một dòng "Không có gì quan trọng: ...".
 
 Chỉ nêu điều có trong log, không suy đoán. Nếu một thông tin mơ hồ (ví dụ hạn "thứ 6" không rõ tuần nào), ghi đúng như trong log.`;
@@ -68,18 +70,19 @@ export async function buildReport(now = Date.now()): Promise<{ text: string; mar
   const markReported = () => setKv(LAST_REPORT_KEY, String(now));
 
   try {
-    await extractTasks(now);
+    await extractNew(now);
   } catch (err) {
-    console.error("[report] task extraction failed, continuing without fresh tasks:", err);
+    console.error("[report] extraction failed, continuing without fresh tasks/metrics:", err);
   }
   const tasks = taskSection(now);
+  const metrics = metricSection(fromTs);
 
   const header = `BÁO CÁO ZALO - ${formatDate(now)}\n(${formatTime(fromTs)} ${formatDate(fromTs)} → ${formatTime(now)})`;
   if (!messages.length) {
     const body = "Không có tin nhắn mới trong các nhóm đang theo dõi.";
-    return { text: [header, body, tasks].filter(Boolean).join("\n\n"), markReported };
+    return { text: [header, body, metrics, tasks].filter(Boolean).join("\n\n"), markReported };
   }
 
   const summary = await complete(systemPrompt(), buildTranscript(messages));
-  return { text: [header, summary, tasks].filter(Boolean).join("\n\n"), markReported };
+  return { text: [header, summary, metrics, tasks].filter(Boolean).join("\n\n"), markReported };
 }

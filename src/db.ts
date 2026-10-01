@@ -46,6 +46,22 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_tasks_status_due ON tasks (status, due_at);
 
+  -- One figure per (group, day, metric, reporter); a later correction overwrites it.
+  CREATE TABLE IF NOT EXISTS metrics (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id      TEXT NOT NULL,
+    period_date   TEXT NOT NULL,
+    metric        TEXT NOT NULL,
+    reporter      TEXT NOT NULL,
+    value         REAL NOT NULL,
+    unit          TEXT NOT NULL DEFAULT '',
+    additive      INTEGER NOT NULL DEFAULT 1,
+    source_msg_id TEXT NOT NULL,
+    updated_at    INTEGER NOT NULL,
+    UNIQUE (group_id, period_date, metric, reporter)
+  );
+  CREATE INDEX IF NOT EXISTS idx_metrics_updated ON metrics (updated_at);
+
   CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -165,6 +181,68 @@ export function tasksToRemind(ts: number): Task[] {
 export function markReminded(ids: number[], ts: number): void {
   const stmt = db.prepare("UPDATE tasks SET reminded_at = ? WHERE id = ?");
   for (const id of ids) stmt.run(ts, id);
+}
+
+export type Metric = {
+  id: number;
+  group_id: string;
+  period_date: string; // YYYY-MM-DD in the report timezone
+  metric: string;
+  reporter: string;
+  value: number;
+  unit: string;
+  additive: number;
+  source_msg_id: string;
+  updated_at: number;
+};
+
+export function upsertMetric(m: Omit<Metric, "id" | "updated_at">): void {
+  db.prepare(`
+    INSERT INTO metrics (group_id, period_date, metric, reporter, value, unit, additive, source_msg_id, updated_at)
+    VALUES (:group_id, :period_date, :metric, :reporter, :value, :unit, :additive, :source_msg_id, :now)
+    ON CONFLICT (group_id, period_date, metric, reporter) DO UPDATE SET
+      value = excluded.value, unit = excluded.unit, additive = excluded.additive,
+      source_msg_id = excluded.source_msg_id, updated_at = excluded.updated_at
+  `).run({ ...m, now: Date.now() });
+}
+
+/** Distinct metric names per group, so the extractor reuses existing names. */
+export function knownMetrics(): { group_id: string; metric: string; unit: string }[] {
+  return db
+    .prepare("SELECT group_id, metric, MAX(unit) AS unit FROM metrics GROUP BY group_id, metric ORDER BY group_id, metric")
+    .all() as { group_id: string; metric: string; unit: string }[];
+}
+
+export function metricsUpdatedSince(ts: number): Metric[] {
+  return db.prepare("SELECT * FROM metrics WHERE updated_at >= ? ORDER BY group_id, metric, period_date").all(ts) as Metric[];
+}
+
+/** All rows of one group+metric between two dates (inclusive, YYYY-MM-DD). */
+export function metricRows(groupId: string, metric: string, fromDate: string, toDate: string): Metric[] {
+  return db
+    .prepare("SELECT * FROM metrics WHERE group_id = ? AND metric = ? AND period_date BETWEEN ? AND ? ORDER BY period_date, reporter")
+    .all(groupId, metric, fromDate, toDate) as Metric[];
+}
+
+export function metricsBetweenDates(fromDate: string, toDate: string): Metric[] {
+  return db
+    .prepare("SELECT * FROM metrics WHERE period_date BETWEEN ? AND ? ORDER BY group_id, metric, period_date")
+    .all(fromDate, toDate) as Metric[];
+}
+
+export function previousPeriodDate(groupId: string, metric: string, beforeDate: string): string | undefined {
+  const row = db
+    .prepare("SELECT MAX(period_date) AS d FROM metrics WHERE group_id = ? AND metric = ? AND period_date < ?")
+    .get(groupId, metric, beforeDate) as { d: string | null };
+  return row.d ?? undefined;
+}
+
+export function allMetrics(): (Metric & { source_text: string | null })[] {
+  return db
+    .prepare(`SELECT m.*, msg.text AS source_text FROM metrics m
+              LEFT JOIN messages msg ON msg.msg_id = m.source_msg_id
+              ORDER BY m.group_id, m.period_date, m.metric, m.reporter`)
+    .all() as (Metric & { source_text: string | null })[];
 }
 
 export function getKv(key: string): string | undefined {
