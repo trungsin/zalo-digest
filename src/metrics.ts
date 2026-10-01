@@ -2,7 +2,7 @@
 import { groupName, metricRows, metricsBetweenDates, metricsUpdatedSince, previousPeriodDate, type Metric } from "./db.js";
 import { dayKey } from "./time.js";
 
-const TOTAL = "tổng";
+export const TOTAL = "tổng";
 const num = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 });
 
 function shortDate(date: string): string {
@@ -11,7 +11,7 @@ function shortDate(date: string): string {
 }
 
 /** Total for one day: the reported team total if someone gave one, else the sum of individual figures. */
-function dayTotal(rows: Metric[]): number | undefined {
+export function dayTotal(rows: Metric[]): number | undefined {
   if (!rows.length || !rows[0].additive) return undefined;
   const reported = rows.find((r) => r.reporter.toLowerCase() === TOTAL);
   return reported ? reported.value : rows.reduce((sum, r) => sum + r.value, 0);

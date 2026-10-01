@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { refreshGroupNames, startRecorder } from "./recorder.js";
 import { buildReport } from "./report.js";
 import { extractNew } from "./extract.js";
+import { startMcpHttp } from "./mcp.js";
 import { sendReminders } from "./tasks.js";
 import { login, sendToSelf } from "./zalo.js";
 
@@ -15,6 +16,14 @@ if (!config.trackedGroupIds.size) {
 const api = await login();
 await refreshGroupNames(api);
 console.log(`[main] ${config.userName}: logged in as ${api.getOwnId()}, ${config.llm.provider}/${config.llm.model}, tracking ${config.trackedGroupIds.size} group(s)`);
+
+if (config.mcpToken) {
+  if (config.mcpToken.length < 32) {
+    console.error("MCP_TOKEN must be at least 32 characters. Generate one with: openssl rand -hex 32");
+    process.exit(1);
+  }
+  startMcpHttp(config.mcpPort, config.mcpToken);
+}
 
 startRecorder(api, async (reason) => {
   await alertByEmail("Mất kết nối Zalo", `${reason}\nProcess sẽ thoát để pm2 khởi động lại.`);

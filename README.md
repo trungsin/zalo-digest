@@ -4,8 +4,62 @@ Ghi lại tin nhắn từ các nhóm Zalo đã chọn và gửi báo cáo tóm t
 
 > ⚠️ Dùng thư viện không chính thức `zca-js` (giả lập Zalo Web). Việc này vi phạm điều khoản của Zalo, nên **tài khoản có thể bị khóa**. Người dùng phải được báo trước và đồng ý.
 
-Đã có: listener, lưu SQLite, báo cáo sáng cá nhân hóa, chạy cho nhiều người (giai đoạn 1); trích việc và nhắc deadline (giai đoạn 2); tổng hợp số liệu (giai đoạn 3).
-Sắp làm: MCP server.
+Gồm: listener, lưu SQLite, báo cáo sáng cá nhân hóa, chạy cho nhiều người (giai đoạn 1); trích việc và nhắc deadline (giai đoạn 2); tổng hợp số liệu (giai đoạn 3); MCP server để hỏi Claude (giai đoạn 4).
+
+## Hỏi Claude về dữ liệu Zalo (MCP)
+
+Kết nối app Claude với dữ liệu của mình để hỏi tự do, ví dụ:
+- "Hôm qua nhóm sales HN chốt những gì?"
+- "Tuần này doanh số từng người thế nào, ai giảm?"
+- "Tôi đang có việc gì quá hạn? Đánh dấu việc báo giá là xong."
+- "Tìm tin nào nhắc tới hợp đồng ABC."
+
+Claude trong app của bạn làm phần đọc và phân tích, nên dùng gói sub Claude của chính bạn.
+
+| Tool | Tác dụng |
+|---|---|
+| `zalo_list_groups` | Danh sách nhóm, số tin, các chỉ số, ngày hôm nay |
+| `zalo_get_messages` | Đọc/tìm tin theo nhóm, người gửi, khoảng ngày (tìm được khi gõ không dấu) |
+| `zalo_list_tasks` | Danh sách việc (đang mở / xong / hủy) |
+| `zalo_update_task` | Đánh dấu xong/hủy, đổi hạn |
+| `zalo_get_metrics` | Số liệu theo ngày, người báo cáo, kèm tổng mỗi ngày |
+
+**Không có tool gửi tin Zalo**, Claude không thể nhắn thay bạn.
+
+### Cách 1: qua SSH (chỉ dành cho chủ VPS)
+
+Cách này không cần domain hay HTTPS. Trên máy của bạn:
+
+```bash
+claude mcp add zalo -- ssh user@vps "cd ~/zalo-digest && USER_DIR=users/an npm run -s mcp-stdio"
+```
+
+Với Claude Desktop, thêm vào `claude_desktop_config.json`:
+
+```json
+{ "mcpServers": { "zalo": { "command": "ssh", "args": ["user@vps", "cd ~/zalo-digest && USER_DIR=users/an npm run -s mcp-stdio"] } } }
+```
+
+⚠️ **Đừng cấp quyền SSH cho người khác để họ dùng cách này.** Ai vào được VPS là đọc được dữ liệu Zalo của tất cả mọi người. Với người khác, dùng cách 2.
+
+### Cách 2: qua HTTPS + token (cho từng người, dùng được trên web và điện thoại)
+
+1. Trong `users/<tên>/.env`, đặt `MCP_TOKEN` (tạo bằng `openssl rand -hex 32`) và một `MCP_PORT` riêng, rồi chạy `pm2 restart zalo-<tên>`. Server chỉ nghe trên `127.0.0.1`.
+2. Trỏ một domain về VPS và cài [Caddy](https://caddyserver.com) (tự cấp HTTPS). File `/etc/caddy/Caddyfile`:
+   ```
+   zalo.example.com {
+       handle_path /an/*   { reverse_proxy 127.0.0.1:3101 }
+       handle_path /binh/* { reverse_proxy 127.0.0.1:3102 }
+   }
+   ```
+3. Kết nối:
+   - **claude.ai** (rồi dùng được trên app desktop và điện thoại): vào Settings → Connectors → thêm custom connector với URL `https://zalo.example.com/an/mcp/<MCP_TOKEN>`.
+   - **Claude Code**: `claude mcp add --transport http zalo https://zalo.example.com/an/mcp --header "Authorization: Bearer <MCP_TOKEN>"`
+
+**Bảo mật:**
+- URL có chứa token, nên cần giữ kín như mật khẩu.
+- Muốn đổi token thì sửa `.env` rồi restart.
+- Không bật `log` trong Caddy cho site này, để token không bị ghi vào log.
 
 ## Số liệu
 
@@ -94,6 +148,7 @@ Mọi lệnh đều cần thêm `USER_DIR=users/<tên>` ở đầu để chọn 
 | `npm run report` | Tạo báo cáo ngay và in ra màn hình, không gửi |
 | `npm run report -- --send` | Tạo báo cáo và gửi vào Cloud của tôi |
 | `npm run export-metrics` | Xuất số liệu ra CSV |
+| `npm run -s mcp-stdio` | MCP server qua stdio (dùng với SSH) |
 
 ⚠️ Nên dừng process pm2 của người đó trước khi chạy `groups` hoặc `--send`. Hai phiên đăng nhập cùng lúc có thể làm Zalo ngắt phiên đang chạy (chưa kiểm chứng).
 

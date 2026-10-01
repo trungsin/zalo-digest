@@ -62,6 +62,10 @@ export const config = {
   // Hours [start, end) when no reminders are sent, e.g. "22-7".
   quietHours: (process.env.QUIET_HOURS ?? "22-7").split("-").map(Number) as [number, number],
 
+  // MCP server (phase 4). Enabled when MCP_TOKEN is set; one port per person.
+  mcpPort: Number(process.env.MCP_PORT ?? 3100),
+  mcpToken: process.env.MCP_TOKEN?.trim() ?? "",
+
   // Optional: email alert when the Zalo session dies (we can't alert via Zalo then).
   smtpUrl: process.env.SMTP_URL,
   alertEmail: process.env.ALERT_EMAIL,

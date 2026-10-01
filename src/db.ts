@@ -8,6 +8,7 @@ export const db = new DatabaseSync(config.dbPath);
 
 db.exec(`
   PRAGMA journal_mode = WAL;
+  PRAGMA busy_timeout = 5000;
 
   CREATE TABLE IF NOT EXISTS groups (
     id   TEXT PRIMARY KEY,
@@ -243,6 +244,32 @@ export function allMetrics(): (Metric & { source_text: string | null })[] {
               LEFT JOIN messages msg ON msg.msg_id = m.source_msg_id
               ORDER BY m.group_id, m.period_date, m.metric, m.reporter`)
     .all() as (Metric & { source_text: string | null })[];
+}
+
+// ---------------------------------------------------------------- queries for the MCP server
+
+export type GroupStats = { id: string; name: string; message_count: number; first_ts: number | null; last_ts: number | null };
+
+export function groupStats(): GroupStats[] {
+  return db
+    .prepare(`SELECT g.id, g.name, COUNT(m.msg_id) AS message_count, MIN(m.ts) AS first_ts, MAX(m.ts) AS last_ts
+              FROM groups g LEFT JOIN messages m ON m.group_id = g.id
+              GROUP BY g.id ORDER BY g.name`)
+    .all() as GroupStats[];
+}
+
+/** Messages in a time range, optionally limited to some groups, oldest first. */
+export function messagesInRange(fromTs: number, toTs: number, groupIds: string[] | null, maxRows: number): StoredMessage[] {
+  const groupFilter = groupIds ? `AND group_id IN (${groupIds.map(() => "?").join(",")})` : "";
+  return db
+    .prepare(`SELECT * FROM messages WHERE ts >= ? AND ts < ? ${groupFilter} ORDER BY ts LIMIT ?`)
+    .all(fromTs, toTs, ...(groupIds ?? []), maxRows) as StoredMessage[];
+}
+
+export function tasksByStatus(status: Task["status"] | null): Task[] {
+  return (status
+    ? db.prepare("SELECT * FROM tasks WHERE status = ? ORDER BY due_at IS NULL, due_at, id").all(status)
+    : db.prepare("SELECT * FROM tasks ORDER BY id DESC").all()) as Task[];
 }
 
 export function getKv(key: string): string | undefined {
