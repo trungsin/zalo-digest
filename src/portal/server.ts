@@ -1,13 +1,33 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { isIP } from "node:net";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { once } from "node:events";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-export type PortalOptions = { origin?: string; invitation?: string; root?: string; workerPath?: string };
+const SELECTION_TIMEOUT_MS = 90_000;
+const AUTH_WINDOW_MS = 60_000;
+const AUTH_GLOBAL_LIMIT = 200;
+const AUTH_MAX_KEYS = 10_000;
+const publicDir = fileURLToPath(new URL("../../public/portal/", import.meta.url));
+const defaultWorkerPath = fileURLToPath(new URL("./worker.ts", import.meta.url));
+
+export type PortalOptions = { origin?: string; invitation?: string; root?: string; workerPath?: string; selectionTimeoutMs?: number; authGlobalLimit?: number; authMaxKeys?: number };
+
+function authKey(address: string): string {
+  if (isIP(address) !== 6) return address;
+  const [head, tail] = new URL(`http://[${address.split("%")[0]}]/`).hostname.slice(1, -1).split("::");
+  const left = head ? head.split(":") : []; const right = tail ? tail.split(":") : [];
+  const words = (tail === undefined ? left : [...left, ...Array<string>(8 - left.length - right.length).fill("0"), ...right]).map(word => parseInt(word, 16));
+  // IPv4-mapped sockets keep their IPv4 quota instead of sharing the ::/64 bucket.
+  if (words.slice(0, 5).every(word => word === 0) && words[5] === 0xffff) {
+    return [words[6]! >> 8, words[6]! & 255, words[7]! >> 8, words[7]! & 255].join(".");
+  }
+  return `${words.slice(0, 4).map(word => word.toString(16)).join(":")}/64`;
+}
 
 export function createPortal(options: PortalOptions = {}) {
   const origin = options.origin ?? process.env.PORTAL_ORIGIN ?? "http://localhost:3080";
@@ -25,7 +45,7 @@ export function createPortal(options: PortalOptions = {}) {
   }
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS accounts_zalo_uid ON accounts(zalo_uid) WHERE zalo_uid IS NOT NULL");
   type Account = { id: string; username: string; salt: string; password: string; token: string; zalo_uid?: string | null };
-  type Worker = { child: ChildProcess; status: string; port?: number; groups: unknown[]; selected: string[]; zaloUid?: string; error?: string; timer?: NodeJS.Timeout };
+  type Worker = { child: ChildProcess; status: string; port?: number; groups: unknown[]; selected: string[]; zaloUid?: string; error?: string; timer?: NodeJS.Timeout; fail: (error?: string) => void };
   const workers = new Map<string, Worker>();
   let closing = false;
   const equal = (a: string, b: string) => { const x = Buffer.from(a); const y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
@@ -56,17 +76,17 @@ export function createPortal(options: PortalOptions = {}) {
     const dir = accountDir(a);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (!fs.existsSync(path.join(dir, ".env"))) fs.writeFileSync(path.join(dir, ".env"), `MCP_TOKEN=${a.token}\n`, { mode: 0o600 });
-    const child = fork(path.resolve(options.workerPath ?? "src/portal/worker.ts"), [], { execArgv: ["--import", "tsx"],
+    const child = fork(path.resolve(options.workerPath ?? defaultWorkerPath), [], { execArgv: ["--import", "tsx"],
       env: { PATH: process.env.PATH, HOME: process.env.HOME, USER_DIR: dir, PORTAL_SCOPED: "1", PORTAL_MCP_TOKEN: a.token, PORTAL_USERNAME: a.username, PORTAL_ACCOUNT_ID: a.id, PORTAL_EXPECTED_ZALO_UID: a.zalo_uid ?? "", NODE_OPTIONS: "--disable-warning=ExperimentalWarning" },
       stdio: ["ignore", "ignore", "ignore", "ipc"] });
-    const state: Worker = { child, status: "qr", groups: [], selected: [] };
+    const state: Worker = { child, status: "qr", groups: [], selected: [], fail };
     workers.set(a.id, state);
-    const fail = (error = state.error ?? "Phiên kết nối bị gián đoạn. Vui lòng kết nối lại.") => {
+    function fail(error = state.error ?? "Phiên kết nối bị gián đoạn. Vui lòng kết nối lại.") {
       if (workers.get(a.id) !== state) return;
       clearTimeout(state.timer);
       state.status = "error"; state.error = error; state.port = undefined;
       state.child.kill();
-    };
+    }
     state.timer = setTimeout(() => fail("Mã QR đã hết thời gian. Vui lòng kết nối lại."), 10 * 60_000);
     child.on("message", (m: { type: string; reason?: string; uid?: string; port?: number; groups?: unknown[]; selected?: string[] }) => {
       if (workers.get(a.id) !== state || state.status === "error") return;
@@ -85,7 +105,7 @@ export function createPortal(options: PortalOptions = {}) {
         if (!state.zaloUid || !m.port || m.port < 1 || m.port > 65535) return fail("Không xác minh được kết nối MCP.");
         clearTimeout(state.timer); state.status = "ready"; state.port = m.port; state.groups = m.groups ?? []; state.selected = m.selected ?? [];
       }
-      if (m.type === "selected" && state.zaloUid && state.port) { state.selected = m.selected ?? []; state.status = "ready"; }
+      if (m.type === "selected" && state.zaloUid && state.port) { clearTimeout(state.timer); state.selected = m.selected ?? []; state.status = "ready"; }
       if (m.type === "error") fail(m.reason === "identity-mismatch" ? "Tài khoản này đã gắn với Zalo khác. Hãy đăng nhập đúng Zalo đã kết nối ban đầu." : undefined);
     });
     child.on("exit", () => fail());
@@ -103,6 +123,10 @@ export function createPortal(options: PortalOptions = {}) {
     return JSON.parse(Buffer.concat(chunks).toString());
   }
   const attempts = new Map<string, { n: number; until: number }>();
+  const globalLimit = options.authGlobalLimit ?? AUTH_GLOBAL_LIMIT;
+  const maxKeys = options.authMaxKeys ?? AUTH_MAX_KEYS;
+  let globalAttempts = { n: 0, until: 0 };
+  let nextAttemptCleanup = Date.now() + AUTH_WINDOW_MS;
   const server = http.createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -127,17 +151,35 @@ export function createPortal(options: PortalOptions = {}) {
       }
       if (req.method === "GET" && ["/", "/app.js", "/style.css"].includes(url.pathname)) {
         const file = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
-        res.writeHead(200, { "content-type": file.endsWith("html") ? "text/html; charset=utf-8" : file.endsWith("js") ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8" });
-        fs.createReadStream(path.resolve("public/portal", file)).pipe(res); return;
+        res.setHeader("content-type", file.endsWith("html") ? "text/html; charset=utf-8" : file.endsWith("js") ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8");
+        const stream = fs.createReadStream(path.join(publicDir, file));
+        stream.on("error", (error: NodeJS.ErrnoException) => {
+          if (!res.headersSent) send(error.code === "ENOENT" ? 404 : 500, { error: "Không tải được tệp" });
+          else res.destroy();
+        });
+        res.once("close", () => stream.destroy());
+        stream.pipe(res); return;
       }
       if (!url.pathname.startsWith("/api/")) return send(404, { error: "Không tìm thấy" });
       if (req.method === "POST" && req.headers.origin !== publicOrigin) return send(403, { error: "Nguồn truy cập không hợp lệ" });
       if (req.method === "POST" && ["/api/register", "/api/login"].includes(url.pathname)) {
-        // Shared quota also limits requests when a reverse proxy hides client IPs.
-        const key = req.socket.remoteAddress ?? "local"; const now = Date.now();
-        for (const [k, v] of attempts) if (v.until < now) attempts.delete(k);
-        const rate = attempts.get(key) ?? { n: 0, until: now + 60_000 }; attempts.set(key, rate);
+        const remote = req.socket.remoteAddress ?? "local";
+        const address = remote.replace(/^::ffff:/i, "");
+        const loopback = address === "::1" || (isIP(address) === 4 && address.startsWith("127."));
+        const header = req.headers["cf-connecting-ip"];
+        const clientIp = (Array.isArray(header) ? header[0] : header)?.split(",")[0]?.trim();
+        const key = authKey(loopback && clientIp && isIP(clientIp) ? clientIp : remote); const now = Date.now();
+        if (now >= nextAttemptCleanup) {
+          for (const [k, v] of attempts) if (v.until <= now) attempts.delete(k);
+          nextAttemptCleanup = now + AUTH_WINDOW_MS;
+        }
+        let rate = attempts.get(key);
+        if (!rate && attempts.size >= maxKeys) return send(429, { error: "Thử lại sau một phút" });
+        if (!rate || rate.until <= now) { rate = { n: 0, until: now + AUTH_WINDOW_MS }; attempts.set(key, rate); }
         if (++rate.n > 20) return send(429, { error: "Thử lại sau một phút" });
+        // Only requests within their own per-IP quota count toward the shared ceiling, so one noisy client cannot exhaust it for everyone.
+        if (globalAttempts.until <= now) globalAttempts = { n: 0, until: now + AUTH_WINDOW_MS };
+        if (++globalAttempts.n > globalLimit) return send(429, { error: "Thử lại sau một phút" });
         const b = await body(req);
         const username = String(b.username ?? "").trim().toLowerCase(); const password = String(b.password ?? "");
         if (!/^[a-z0-9_-]{3,40}$/.test(username) || password.length < 12 || password.length > 256) return send(400, { error: "Tên tài khoản 3–40 ký tự không dấu; mật khẩu tối thiểu 12 ký tự" });
@@ -178,7 +220,10 @@ export function createPortal(options: PortalOptions = {}) {
         const b = await body(req); const w = workers.get(a.id);
         if (w?.status === "selecting") return send(409, { error: "Đang lưu nhóm, vui lòng chờ." });
         if (!w || w.status !== "ready" || !Array.isArray(b.selected) || !b.selected.length || b.selected.length > 200 || b.selected.some(id => typeof id !== "string" || !(w.groups as { id: string }[]).some(g => g.id === id))) return send(400, { error: "Vui lòng chọn nhóm hợp lệ" });
-        w.status = "selecting"; w.child.send({ type: "select", selected: b.selected }); return send(200, { ok: true });
+        w.status = "selecting";
+        clearTimeout(w.timer);
+        w.timer = setTimeout(() => w.fail("Lưu nhóm đã hết thời gian. Vui lòng kết nối lại."), options.selectionTimeoutMs ?? SELECTION_TIMEOUT_MS);
+        w.child.send({ type: "select", selected: b.selected }); return send(200, { ok: true });
       }
       if (req.method === "POST" && url.pathname === "/api/logout") {
         const sid = req.headers.cookie?.match(/zalo_session=([a-f0-9]{64})/)?.[1];
@@ -195,7 +240,7 @@ export function createPortal(options: PortalOptions = {}) {
   return { server, close: async () => {
     closing = true;
     await Promise.allSettled([...starting.values()]);
-    for (const w of workers.values()) w.child.kill();
+    for (const w of workers.values()) { clearTimeout(w.timer); w.child.kill(); }
     await Promise.allSettled([...workers.values()].map(w => w.child.exitCode === null && w.child.signalCode === null ? once(w.child, "exit") : Promise.resolve()));
     if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()));
     db.close();
