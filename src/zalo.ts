@@ -15,12 +15,19 @@ export async function login(verifyAccount?: (api: API) => Promise<void>): Promis
   const zalo = new Zalo({ selfListen: true, logging: false });
 
   if (fs.existsSync(config.credentialsPath)) {
-    const credentials = JSON.parse(fs.readFileSync(config.credentialsPath, "utf8")) as Credentials;
-    let api: API | undefined;
+    let credentials: Credentials | undefined;
     try {
-      api = await zalo.login(credentials);
+      credentials = JSON.parse(fs.readFileSync(config.credentialsPath, "utf8")) as Credentials;
     } catch (err) {
-      console.error("[zalo] Saved credentials rejected, falling back to QR login:", err);
+      console.error("[zalo] Saved credentials unreadable, falling back to QR login:", err);
+    }
+    let api: API | undefined;
+    if (credentials) {
+      try {
+        api = await zalo.login(credentials);
+      } catch (err) {
+        console.error("[zalo] Saved credentials rejected, falling back to QR login:", err);
+      }
     }
     if (api) {
       assertLocalAccount(config.dataDir, api.getOwnId(), config.expectedZaloUid);
