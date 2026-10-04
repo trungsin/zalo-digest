@@ -1,0 +1,24 @@
+[Unit]
+Description=Zalo Digest (%i)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=leesun
+Group=leesun
+WorkingDirectory=/home/leesun/zalo-digest
+Environment=USER_DIR=/home/leesun/zalo-digest/users/%i
+Environment=NODE_OPTIONS=--disable-warning=ExperimentalWarning
+ExecStartPre=/usr/bin/node --import tsx src/cli/check-config.ts
+ExecStart=/usr/bin/node --import tsx src/index.ts
+Restart=on-failure
+RestartSec=60
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

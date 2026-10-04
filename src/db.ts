@@ -260,6 +260,7 @@ export function groupStats(): GroupStats[] {
 
 /** Messages in a time range, optionally limited to some groups, oldest first. */
 export function messagesInRange(fromTs: number, toTs: number, groupIds: string[] | null, maxRows: number): StoredMessage[] {
+  if (groupIds?.length === 0) return [];
   const groupFilter = groupIds ? `AND group_id IN (${groupIds.map(() => "?").join(",")})` : "";
   return db
     .prepare(`SELECT * FROM messages WHERE ts >= ? AND ts < ? ${groupFilter} ORDER BY ts LIMIT ?`)

@@ -1,5 +1,7 @@
 # zalo-digest
 
+Hướng dẫn triển khai bằng systemd trên máy hiện tại: [OPERATIONS.md](OPERATIONS.md).
+
 Ghi lại tin nhắn từ các nhóm Zalo đã chọn và gửi báo cáo tóm tắt mỗi sáng vào **Cloud của tôi**. Một VPS chạy được cho nhiều người, mỗi người có cấu hình riêng.
 
 > ⚠️ Dùng thư viện không chính thức `zca-js` (giả lập Zalo Web). Việc này vi phạm điều khoản của Zalo, nên **tài khoản có thể bị khóa**. Người dùng phải được báo trước và đồng ý.
@@ -23,8 +25,11 @@ Claude trong app của bạn làm phần đọc và phân tích, nên dùng gói
 | `zalo_list_tasks` | Danh sách việc (đang mở / xong / hủy) |
 | `zalo_update_task` | Đánh dấu xong/hủy, đổi hạn |
 | `zalo_get_metrics` | Số liệu theo ngày, người báo cáo, kèm tổng mỗi ngày |
+| `zalo_send_to_self` | Gửi nội dung vào **Cloud của tôi** của tài khoản đang kết nối (tối đa 10.000 ký tự) |
 
-**Không có tool gửi tin Zalo**, Claude không thể nhắn thay bạn.
+Tool gửi tin có trên MCP HTTPS của dịch vụ đang đăng nhập Zalo, dùng lại phiên đang chạy. Ví dụ: "Gửi bản tóm tắt này vào Cloud Zalo của tôi". Gọi lại sẽ gửi thêm một bản; nếu lỗi hãy kiểm tra Cloud trước khi thử lại vì một phần có thể đã gửi. MCP stdio qua SSH chỉ đọc dữ liệu/cập nhật việc, chưa có tool gửi tin.
+
+Tình trạng kiểm tra thực tế: MCP nhận được tool, nhưng lần gửi thử vào Cloud của tài khoản portal đang trả mã lỗi Zalo 114. Chưa xác minh gửi thành công trên tài khoản này.
 
 ### Cách 1: qua SSH (chỉ dành cho chủ VPS)
 

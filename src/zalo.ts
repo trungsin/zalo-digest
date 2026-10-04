@@ -10,6 +10,7 @@ const MAX_CHUNK = 2500;
  * Credentials from a QR login are saved so later restarts don't need a rescan.
  */
 export async function login(): Promise<API> {
+  fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
   const zalo = new Zalo({ selfListen: true, logging: false });
 
   if (fs.existsSync(config.credentialsPath)) {

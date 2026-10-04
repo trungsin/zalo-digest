@@ -1,0 +1,22 @@
+[Unit]
+Description=Zalo self-service MCP portal
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=leesun
+Group=leesun
+WorkingDirectory=/home/leesun/zalo-digest
+EnvironmentFile=/home/leesun/zalo-digest/.portal.env
+Environment=NODE_OPTIONS=--disable-warning=ExperimentalWarning
+ExecStart=/usr/bin/node --import tsx src/portal/server.ts
+Restart=on-failure
+RestartSec=10
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

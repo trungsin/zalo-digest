@@ -7,10 +7,12 @@
     "node": ">=22.13"
   },
   "scripts": {
+    "portal": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/portal/server.ts",
     "start": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/index.ts",
     "groups": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/cli/list-groups.ts",
     "report": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/cli/report-now.ts",
     "typecheck": "tsc --noEmit",
+    "check-config": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/cli/check-config.ts",
     "add-user": "tsx src/cli/add-user.ts",
     "export-metrics": "tsx src/cli/export-metrics.ts",
     "mcp-stdio": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/cli/mcp-stdio.ts"

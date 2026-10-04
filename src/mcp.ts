@@ -1,6 +1,6 @@
 // MCP server over the local SQLite: lets the owner's Claude app read groups, messages, tasks and metrics.
 // Summarizing/analysis happens in the client (on the owner's own Claude plan), not here.
-// Deliberately has no tool that sends Zalo messages.
+// Sending uses the existing account's live session, when supplied by the host.
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -16,6 +16,7 @@ import { dayKey, localIso, utcOffset } from "./time.js";
 
 const MAX_SCAN = 50_000;
 const DAY_MS = 24 * 3600e3;
+const visibleGroups = () => groupStats().filter(g => process.env.PORTAL_SCOPED !== "1" || config.trackedGroupIds.has(g.id));
 
 // ---------------------------------------------------------------- helpers
 
@@ -33,8 +34,8 @@ function dayStart(date: string): number {
 
 /** Resolve a group given by id or (part of) its name; null means all groups. */
 function resolveGroups(group: string | undefined): string[] | null {
-  if (!group) return null;
-  const groups = groupStats();
+  if (!group) return process.env.PORTAL_SCOPED === "1" ? [...config.trackedGroupIds] : null;
+  const groups = visibleGroups();
   const exact = groups.find((g) => g.id === group);
   if (exact) return [exact.id];
   const matches = groups.filter((g) => fold(g.name).includes(fold(group)));
@@ -68,8 +69,30 @@ const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: t
 
 // ---------------------------------------------------------------- server
 
-export function createMcpServer(): McpServer {
+export type SelfSender = (text: string) => Promise<void>;
+
+export function createMcpServer(sendToSelf?: SelfSender): McpServer {
   const server = new McpServer({ name: "zalo-digest", version: "0.4.0" });
+
+  if (sendToSelf) server.registerTool(
+    "zalo_send_to_self",
+    {
+      title: "Gửi vào Cloud của tôi",
+      description: "Send text to the connected account's own Zalo Cloud (Cloud của tôi). Use only when the owner asks to send or save content there. A repeated call sends another copy. Long text may be split into several messages. If sending fails, some parts may already have been delivered; do not automatically retry.",
+      inputSchema: { text: z.string().trim().min(1).max(10000).describe("Nội dung cần gửi vào Cloud của tôi, tối đa 10.000 ký tự.") },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ text }) => {
+      try {
+        await sendToSelf(text);
+        return json({ sent: true, destination: "Cloud của tôi" });
+      } catch (error) {
+        const code = (error as { code?: unknown } | null)?.code;
+        const detail = typeof code === "number" ? ` (mã Zalo: ${code})` : "";
+        return { isError: true, content: [{ type: "text" as const, text: `Gửi tin thất bại${detail}. Một phần nội dung có thể đã được gửi; hãy kiểm tra Cloud của tôi trước khi thử lại.` }] };
+      }
+    },
+  );
 
   server.registerTool(
     "zalo_list_groups",
@@ -87,7 +110,7 @@ export function createMcpServer(): McpServer {
         now: localIso(Date.now()),
         timezone: config.timezone,
         owner_profile: config.userProfile || null,
-        groups: groupStats().map((g) => ({
+        groups: visibleGroups().map((g) => ({
           id: g.id,
           name: g.name,
           message_count: g.message_count,
@@ -179,7 +202,8 @@ export function createMcpServer(): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async ({ task_id, status, due }) => {
-      if (!getTask(task_id)) throw new Error(`Không có việc #${task_id}. Dùng zalo_list_tasks với status "all" để xem id.`);
+      const task = getTask(task_id);
+      if (!task || (process.env.PORTAL_SCOPED === "1" && !config.trackedGroupIds.has(task.group_id))) throw new Error(`Không có việc #${task_id}. Dùng zalo_list_tasks với status "all" để xem id.`);
       const dueTs = due === undefined ? undefined : Date.parse(due);
       if (dueTs !== undefined && Number.isNaN(dueTs)) throw new Error(`Hạn không hợp lệ: "${due}". Dùng ISO 8601 có múi giờ.`);
       updateTask(task_id, {
@@ -268,7 +292,7 @@ function tokenMatches(given: string | undefined, expected: string): boolean {
  * Stateless Streamable HTTP endpoint. Auth: `Authorization: Bearer <token>` (Claude Code, mcp-remote)
  * or the token as the last path segment, `/mcp/<token>` (claude.ai custom connectors, which can't set headers).
  */
-export function startMcpHttp(port: number, token: string): http.Server {
+export function startMcpHttp(port: number, token: string, sendToSelf?: SelfSender): http.Server {
   const httpServer = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     // An optional leading segment ("/an/mcp/...") lets one domain route to several people's ports;
@@ -286,7 +310,7 @@ export function startMcpHttp(port: number, token: string): http.Server {
     }
 
     try {
-      const server = createMcpServer();
+      const server = createMcpServer(sendToSelf);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       res.on("close", () => {
         transport.close();
