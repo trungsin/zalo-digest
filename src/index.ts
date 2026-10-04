@@ -22,7 +22,7 @@ if (config.mcpToken) {
     console.error("MCP_TOKEN must be at least 32 characters. Generate one with: openssl rand -hex 32");
     process.exit(1);
   }
-  startMcpHttp(config.mcpPort, config.mcpToken, text => sendToSelf(api, text));
+  startMcpHttp(config.mcpPort, config.mcpToken, text => sendToSelf(api, text), { username: config.userName, zalo_uid: api.getOwnId() });
 }
 
 startRecorder(api, async (reason) => {

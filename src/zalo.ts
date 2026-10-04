@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { Zalo, LoginQRCallbackEventType, ThreadType, type API, type Credentials } from "zca-js";
 import { config } from "./config.js";
+import { assertLocalAccount, bindLocalAccount } from "./account-binding.js";
 
 // Zalo text messages have a length limit; keep chunks comfortably below it.
 const MAX_CHUNK = 2500;
@@ -9,20 +10,28 @@ const MAX_CHUNK = 2500;
  * Log in with saved credentials, or fall back to a QR code written to data/qr.png.
  * Credentials from a QR login are saved so later restarts don't need a rescan.
  */
-export async function login(): Promise<API> {
+export async function login(verifyAccount?: (api: API) => Promise<void>): Promise<API> {
   fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
   const zalo = new Zalo({ selfListen: true, logging: false });
 
   if (fs.existsSync(config.credentialsPath)) {
     const credentials = JSON.parse(fs.readFileSync(config.credentialsPath, "utf8")) as Credentials;
+    let api: API | undefined;
     try {
-      return await zalo.login(credentials);
+      api = await zalo.login(credentials);
     } catch (err) {
       console.error("[zalo] Saved credentials rejected, falling back to QR login:", err);
     }
+    if (api) {
+      assertLocalAccount(config.dataDir, api.getOwnId(), config.expectedZaloUid);
+      await verifyAccount?.(api);
+      bindLocalAccount(config.dataDir, api.getOwnId(), config.expectedZaloUid);
+      return api;
+    }
   }
 
-  return zalo.loginQR({ qrPath: config.qrPath }, async (event) => {
+  let newCredentials: Credentials | undefined;
+  const api = await zalo.loginQR({ qrPath: config.qrPath }, async (event) => {
     switch (event.type) {
       case LoginQRCallbackEventType.QRCodeGenerated:
         await event.actions.saveToFile(config.qrPath);
@@ -39,18 +48,24 @@ export async function login(): Promise<API> {
         console.error("[zalo] Login declined on phone");
         break;
       case LoginQRCallbackEventType.GotLoginInfo: {
-        const credentials: Credentials = {
+        newCredentials = {
           imei: event.data.imei,
           cookie: event.data.cookie,
           userAgent: event.data.userAgent,
         };
-        fs.writeFileSync(config.credentialsPath, JSON.stringify(credentials), { mode: 0o600 });
         fs.rmSync(config.qrPath, { force: true });
-        console.log(`[zalo] Logged in, credentials saved to ${config.credentialsPath}`);
         break;
       }
     }
   });
+  assertLocalAccount(config.dataDir, api.getOwnId(), config.expectedZaloUid);
+  await verifyAccount?.(api);
+  bindLocalAccount(config.dataDir, api.getOwnId(), config.expectedZaloUid);
+  if (newCredentials) {
+    fs.writeFileSync(config.credentialsPath, JSON.stringify(newCredentials), { mode: 0o600 });
+    console.log(`[zalo] Logged in, credentials saved to ${config.credentialsPath}`);
+  }
+  return api;
 }
 
 /** Zalo assigns Cloud a separate recipient ID in the authenticated login response. */

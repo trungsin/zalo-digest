@@ -9,7 +9,7 @@ import { once } from "node:events";
 test("portal MCP cannot read previously selected groups", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zalo-scope-test-"));
   fs.writeFileSync(path.join(dir, ".env"), "TRACKED_GROUP_IDS=selected\n");
-  const child = fork("tests/mcp-fixture.ts", [], { execArgv: ["--import", "tsx"], env: { ...process.env, USER_DIR: dir, PORTAL_SCOPED: "1" }, stdio: ["ignore", "ignore", "ignore", "ipc"] });
+  const child = fork("tests/mcp-fixture.ts", [], { execArgv: ["--import", "tsx"], env: { ...process.env, USER_DIR: dir, PORTAL_SCOPED: "1", PORTAL_MCP_TOKEN: "test-mcp-token-long-enough-123456789", PORTAL_USERNAME: "test", PORTAL_ACCOUNT_ID: "test-account" }, stdio: ["ignore", "ignore", "ignore", "ipc"] });
   try {
     const [message] = await Promise.race([once(child, "message"), once(child, "exit").then(() => { throw new Error("Fixture exited"); }), new Promise<never>((_, reject) => { const t = setTimeout(() => reject(new Error("Startup timeout")), 10000); t.unref(); })]);
     async function tool(name: string, args = {}) {

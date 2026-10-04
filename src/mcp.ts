@@ -16,7 +16,7 @@ import { dayKey, localIso, utcOffset } from "./time.js";
 
 const MAX_SCAN = 50_000;
 const DAY_MS = 24 * 3600e3;
-const visibleGroups = () => groupStats().filter(g => process.env.PORTAL_SCOPED !== "1" || config.trackedGroupIds.has(g.id));
+const visibleGroups = () => groupStats().filter(g => !config.portalScoped || config.trackedGroupIds.has(g.id));
 
 // ---------------------------------------------------------------- helpers
 
@@ -34,7 +34,7 @@ function dayStart(date: string): number {
 
 /** Resolve a group given by id or (part of) its name; null means all groups. */
 function resolveGroups(group: string | undefined): string[] | null {
-  if (!group) return process.env.PORTAL_SCOPED === "1" ? [...config.trackedGroupIds] : null;
+  if (!group) return config.portalScoped ? [...config.trackedGroupIds] : null;
   const groups = visibleGroups();
   const exact = groups.find((g) => g.id === group);
   if (exact) return [exact.id];
@@ -70,9 +70,17 @@ const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: t
 // ---------------------------------------------------------------- server
 
 export type SelfSender = (text: string) => Promise<void>;
+export type McpAccount = { username: string; zalo_uid: string };
 
-export function createMcpServer(sendToSelf?: SelfSender): McpServer {
-  const server = new McpServer({ name: "zalo-digest", version: "0.4.0" });
+export function createMcpServer(sendToSelf?: SelfSender, account?: McpAccount): McpServer {
+  const server = new McpServer({ name: account ? `zalo-digest-${account.username}` : "zalo-digest", version: "0.4.0" });
+  const response = (data: Record<string, unknown>) => json({ ...data, ...(account && { account }) });
+
+  if (account) server.registerTool("zalo_get_account", {
+    title: "Tài khoản Zalo của kết nối này",
+    description: "Identify the Zalo account bound to this MCP connection. Call first when multiple Zalo connectors are available. Each connection reads, updates tasks and sends only for this account; never assume it belongs to another connector.",
+    annotations: readOnly,
+  }, async () => json(account));
 
   if (sendToSelf) server.registerTool(
     "zalo_send_to_self",
@@ -85,7 +93,7 @@ export function createMcpServer(sendToSelf?: SelfSender): McpServer {
     async ({ text }) => {
       try {
         await sendToSelf(text);
-        return json({ sent: true, destination: "Cloud của tôi" });
+        return response({ sent: true, destination: "Cloud của tôi" });
       } catch (error) {
         const code = (error as { code?: unknown } | null)?.code;
         const detail = typeof code === "number" ? ` (mã Zalo: ${code})` : "";
@@ -105,7 +113,7 @@ export function createMcpServer(sendToSelf?: SelfSender): McpServer {
     },
     async () => {
       const metrics = knownMetrics();
-      return json({
+      return response({
         today: dayKey(Date.now()),
         now: localIso(Date.now()),
         timezone: config.timezone,
@@ -151,7 +159,7 @@ export function createMcpServer(sendToSelf?: SelfSender): McpServer {
       if (sender) rows = rows.filter((m) => fold(m.sender_name).includes(fold(sender)));
 
       const page = rows.slice(offset, offset + limit);
-      return json({
+      return response({
         total: rows.length,
         offset,
         has_more: offset + page.length < rows.length,
@@ -185,7 +193,7 @@ export function createMcpServer(sendToSelf?: SelfSender): McpServer {
       const tasks = tasksByStatus(status === "all" ? null : status)
         .filter((t) => kind === "all" || t.kind === kind)
         .filter((t) => !groupIds || groupIds.includes(t.group_id));
-      return json({ count: tasks.length, tasks: tasks.map(taskView) });
+      return response({ count: tasks.length, tasks: tasks.map(taskView) });
     },
   );
 
@@ -203,14 +211,14 @@ export function createMcpServer(sendToSelf?: SelfSender): McpServer {
     },
     async ({ task_id, status, due }) => {
       const task = getTask(task_id);
-      if (!task || (process.env.PORTAL_SCOPED === "1" && !config.trackedGroupIds.has(task.group_id))) throw new Error(`Không có việc #${task_id}. Dùng zalo_list_tasks với status "all" để xem id.`);
+      if (!task || (config.portalScoped && !config.trackedGroupIds.has(task.group_id))) throw new Error(`Không có việc #${task_id}. Dùng zalo_list_tasks với status "all" để xem id.`);
       const dueTs = due === undefined ? undefined : Date.parse(due);
       if (dueTs !== undefined && Number.isNaN(dueTs)) throw new Error(`Hạn không hợp lệ: "${due}". Dùng ISO 8601 có múi giờ.`);
       updateTask(task_id, {
         ...(status && { status }),
         ...(dueTs !== undefined && { due_at: dueTs, due_text: "" }),
       });
-      return json(taskView(getTask(task_id)!));
+      return response(taskView(getTask(task_id)!));
     },
   );
 
@@ -259,7 +267,7 @@ export function createMcpServer(sendToSelf?: SelfSender): McpServer {
         }
       }
 
-      return json({
+      return response({
         from,
         to,
         rows: rows.map((m) => ({
@@ -292,7 +300,8 @@ function tokenMatches(given: string | undefined, expected: string): boolean {
  * Stateless Streamable HTTP endpoint. Auth: `Authorization: Bearer <token>` (Claude Code, mcp-remote)
  * or the token as the last path segment, `/mcp/<token>` (claude.ai custom connectors, which can't set headers).
  */
-export function startMcpHttp(port: number, token: string, sendToSelf?: SelfSender): http.Server {
+export function startMcpHttp(port: number, token: string, sendToSelf?: SelfSender, account?: McpAccount): http.Server {
+  if (token.length < 32) throw new Error("MCP_TOKEN must contain at least 32 characters");
   const httpServer = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     // An optional leading segment ("/an/mcp/...") lets one domain route to several people's ports;
@@ -310,7 +319,7 @@ export function startMcpHttp(port: number, token: string, sendToSelf?: SelfSende
     }
 
     try {
-      const server = createMcpServer(sendToSelf);
+      const server = createMcpServer(sendToSelf, account);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       res.on("close", () => {
         transport.close();

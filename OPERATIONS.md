@@ -135,4 +135,11 @@ MCP chưa bật mặc định. Nếu cần: thêm `MCP_TOKEN` ngẫu nhiên tố
 
 Thêm người: `npm run add-user -- ten`, hoàn thành các bước cấu hình/QR/nhóm tương tự, rồi dùng `sudo systemctl enable --now zalo-digest@ten`. Mỗi người bật MCP cần một port riêng.
 
+Mỗi người cần thư mục `USER_DIR`, MCP token và port riêng. Sau đăng nhập,
+`data/account.json` cố định Zalo UID cho thư mục; đăng nhập Zalo khác bị chặn
+để không dùng lẫn dữ liệu cũ. Portal cũng cố định UID cho tài khoản web và chặn
+trùng UID giữa các tài khoản web. Với nhiều connector, dùng `zalo_get_account`
+để xác định đúng Zalo trước khi đọc/sửa/gửi. Chi tiết kiểm tra và các giới hạn:
+[review nhiều tài khoản](docs/multi-account-review.md).
+
 Repo sử dụng thư viện Zalo không chính thức, có rủi ro tài khoản bị hạn chế. Dữ liệu nhóm được gửi đến nhà cung cấp model để tóm tắt/trích việc. Cookie trong `users/leesun/data/credentials.json` tương đương thông tin đăng nhập; không chia sẻ hoặc commit thư mục `users/`.

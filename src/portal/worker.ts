@@ -5,10 +5,13 @@ import { config } from "../config.js";
 import { login, sendToSelf } from "../zalo.js";
 import { refreshGroupNames, startRecorder } from "../recorder.js";
 import { startMcpHttp } from "../mcp.js";
+import { confirmPortalIdentity } from "./identity.js";
+import { AccountBindingError } from "../account-binding.js";
 
 const notify = (data: unknown) => process.send?.(data);
+process.on("disconnect", () => process.exit(1));
 try {
-  const api = await login();
+  const api = await login(api => confirmPortalIdentity(api.getOwnId()));
   const ids = Object.keys((await api.getAllGroups()).gridVerMap);
   const groups: { id: string; name: string; members: number }[] = [];
   for (let i = 0; i < ids.length; i += 50) {
@@ -22,7 +25,7 @@ try {
     config.trackedGroupIds.clear();
     selected.forEach(id => config.trackedGroupIds.add(id));
     await refreshGroupNames(api);
-    fs.writeFileSync(path.join(process.env.USER_DIR!, ".env"),
+    fs.writeFileSync(path.join(config.userDir, ".env"),
       `TRACKED_GROUP_IDS=${selected.join(",")}\nMCP_TOKEN=${config.mcpToken}\n`, { mode: 0o600 });
     if (!recording) {
       startRecorder(api, () => process.exit(1));
@@ -39,7 +42,7 @@ try {
       finally { selecting = false; }
     }
   });
-  const server = startMcpHttp(0, config.mcpToken, text => sendToSelf(api, text));
+  const server = startMcpHttp(0, config.mcpToken, text => sendToSelf(api, text), { username: config.userName, zalo_uid: api.getOwnId() });
   server.on("listening", () => {
     const address = server.address();
     if (address && typeof address !== "string") notify({ type: "ready", groups, selected: [...config.trackedGroupIds], port: address.port });
@@ -48,7 +51,7 @@ try {
   config.trackedGroupIds.clear();
   selected.forEach(id => config.trackedGroupIds.add(id));
   if (selected.length) await select(selected);
-} catch {
-  notify({ type: "error" });
+} catch (error) {
+  notify({ type: "error", reason: error instanceof AccountBindingError ? "identity-mismatch" : undefined });
   process.exit(1);
 }

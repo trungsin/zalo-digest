@@ -1,16 +1,17 @@
 const $ = id => document.getElementById(id);
-let registering = false, authenticated = false, groupsKey = '', polling = false;
+let registering = false, authenticated = false, groupsKey = '', pollingVersion = null, authVersion = 0;
 const notice = text => { $('notice').textContent = text; };
 async function api(route, data) {
+  const version = authVersion;
   const r = await fetch('/api/' + route, data === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   const value = await r.json();
-  if (!r.ok) { if (r.status === 401 && authenticated) showAuth(); throw new Error(value.error); }
+  if (!r.ok) { if (r.status === 401 && authenticated && version === authVersion) showAuth(); throw new Error(value.error); }
   return value;
 }
-function showAuth() { authenticated = false; $('auth').hidden = false; $('workspace').hidden = true; $('logout').hidden = true; groupsKey = ''; $('mcpurl').value = ''; $('qr').removeAttribute('src'); }
+function showAuth() { authVersion++; authenticated = false; $('auth').hidden = false; $('workspace').hidden = true; $('logout').hidden = true; groupsKey = ''; $('mcpurl').value = ''; $('qr').removeAttribute('src'); }
 $('toggle').onclick = () => { registering = !registering; $('registration').hidden = !registering; $('submit').textContent = registering ? 'Tạo tài khoản' : 'Đăng nhập'; $('toggle').textContent = registering ? 'Đã có tài khoản' : 'Tạo tài khoản mới'; document.querySelector('[name=password]').autocomplete = registering ? 'new-password' : 'current-password'; };
-$('authform').onsubmit = async e => { e.preventDefault(); const b = Object.fromEntries(new FormData(e.target)); b.consent = e.target.elements.consent.checked; $('submit').disabled = true; try { await api(registering ? 'register' : 'login', b); e.target.reset(); notice(''); await refresh(); } catch (err) { notice(err.message); } finally { $('submit').disabled = false; } };
-$('logout').onclick = async () => { try { await api('logout', {}); showAuth(); notice(''); } catch (err) { notice(err.message); } };
+$('authform').onsubmit = async e => { e.preventDefault(); authVersion++; const b = Object.fromEntries(new FormData(e.target)); b.consent = e.target.elements.consent.checked; $('submit').disabled = true; try { await api(registering ? 'register' : 'login', b); e.target.reset(); notice(''); await refresh(); } catch (err) { notice(err.message); } finally { $('submit').disabled = false; } };
+$('logout').onclick = async () => { authVersion++; try { await api('logout', {}); showAuth(); notice(''); } catch (err) { notice(err.message); } };
 $('connect').onclick = async () => { try { await api('connect', {}); notice('Đang tạo mã QR. Vui lòng chờ một chút.'); await refresh(); } catch (err) { notice(err.message); } };
 function renderGroups(s) {
   const key = JSON.stringify([s.groups, s.selected]); if (key === groupsKey) return; groupsKey = key;
@@ -23,12 +24,14 @@ $('search').oninput = filterGroups;
 $('groupform').onsubmit = async e => { e.preventDefault(); try { await api('groups', { selected: new FormData(e.target).getAll('selected') }); notice('Đang lưu nhóm đã chọn…'); setTimeout(refresh, 1000); } catch (err) { notice(err.message); } };
 $('copy').onclick = async () => { try { await navigator.clipboard.writeText($('mcpurl').value); notice('Đã sao chép URL MCP.'); } catch { $('mcpurl').select(); notice('Chọn và sao chép URL trong ô phía trên.'); } };
 async function refresh() {
-  if (polling) return; polling = true;
-  try { const s = await api('status'); authenticated = true; $('auth').hidden = true; $('workspace').hidden = false; $('logout').hidden = false;
-    $('qrbox').hidden = s.status !== 'qr'; $('connect').hidden = s.status === 'ready' || s.status === 'qr';
-    $('connection').textContent = s.status === 'ready' ? 'Đã đăng nhập Zalo. Bạn có thể chọn nhóm bên dưới.' : s.status === 'error' ? 'Phiên kết nối bị gián đoạn. Bấm tạo mã QR để kết nối lại.' : 'Quét mã bằng ứng dụng Zalo trên điện thoại, rồi xác nhận đăng nhập.';
+  if (pollingVersion === authVersion) return;
+  const version = authVersion;
+  pollingVersion = version;
+  try { const s = await api('status'); if (version !== authVersion) return; authenticated = true; $('auth').hidden = true; $('workspace').hidden = false; $('logout').hidden = false;
+    $('qrbox').hidden = s.status !== 'qr'; $('connect').hidden = s.status === 'ready' || s.status === 'qr' || s.status === 'selecting';
+    $('connection').textContent = s.status === 'ready' ? `Đã đăng nhập Zalo (UID: ${s.zaloUid}). Kết nối MCP này chỉ dùng tài khoản Zalo này.` : s.status === 'selecting' ? 'Đang lưu nhóm đã chọn…' : s.status === 'error' ? s.error || 'Phiên kết nối bị gián đoạn. Bấm tạo mã QR để kết nối lại.' : 'Quét mã bằng ứng dụng Zalo trên điện thoại, rồi xác nhận đăng nhập.';
     if (s.status === 'qr') $('qr').src = '/api/qr?t=' + Date.now(); else $('qr').removeAttribute('src');
     $('groupsection').hidden = s.status !== 'ready'; renderGroups(s); $('mcpsection').hidden = !s.mcpUrl; $('mcpurl').value = s.mcpUrl || '';
-  } catch (err) { if (authenticated) notice(err.message); } finally { polling = false; }
+  } catch (err) { if (authenticated && version === authVersion) notice(err.message); } finally { if (pollingVersion === version) pollingVersion = null; }
 }
 refresh(); setInterval(() => { if (authenticated) refresh(); }, 3000);

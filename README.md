@@ -20,6 +20,7 @@ Claude trong app của bạn làm phần đọc và phân tích, nên dùng gói
 
 | Tool | Tác dụng |
 |---|---|
+| `zalo_get_account` | Xác định tên tài khoản và Zalo UID của kết nối MCP hiện tại |
 | `zalo_list_groups` | Danh sách nhóm, số tin, các chỉ số, ngày hôm nay |
 | `zalo_get_messages` | Đọc/tìm tin theo nhóm, người gửi, khoảng ngày (tìm được khi gõ không dấu) |
 | `zalo_list_tasks` | Danh sách việc (đang mở / xong / hủy) |
@@ -30,6 +31,8 @@ Claude trong app của bạn làm phần đọc và phân tích, nên dùng gói
 Tool gửi tin có trên MCP HTTPS của dịch vụ đang đăng nhập Zalo, dùng lại phiên đang chạy. Ví dụ: "Gửi bản tóm tắt này vào Cloud Zalo của tôi". Gọi lại sẽ gửi thêm một bản; nếu lỗi hãy kiểm tra Cloud trước khi thử lại vì một phần có thể đã gửi. MCP stdio qua SSH chỉ đọc dữ liệu/cập nhật việc, chưa có tool gửi tin.
 
 Đã kiểm tra gửi thành công qua MCP trên tài khoản portal. Cloud có ID riêng `send2me_id` trong phiên đăng nhập; dùng ID tài khoản (`getOwnId()`) làm người nhận có thể gây lỗi Zalo 114. Nếu phiên không có ID Cloud, cần kết nối lại Zalo; ứng dụng không tự chuyển sang người nhận khác.
+
+**Nhiều người dùng:** mỗi URL/token MCP thuộc một tài khoản web, gắn cố định với một Zalo UID. Mỗi tài khoản có worker, cookie, Cloud và SQLite riêng. Nếu thêm nhiều connector vào cùng ứng dụng AI, gọi `zalo_get_account` trước để chọn đúng người; các kết quả đọc/cập nhật/gửi đều kèm danh tính của kết nối đó. Portal chặn dùng cùng Zalo cho hai tài khoản web hoặc đăng nhập Zalo khác vào một tài khoản web đã gắn. Khi worker lỗi, MCP của người đó ngừng phục vụ; không chuyển sang worker khác.
 
 ### Cách 1: qua SSH (chỉ dành cho chủ VPS)
 
@@ -46,6 +49,7 @@ Với Claude Desktop, thêm vào `claude_desktop_config.json`:
 ```
 
 ⚠️ **Đừng cấp quyền SSH cho người khác để họ dùng cách này.** Ai vào được VPS là đọc được dữ liệu Zalo của tất cả mọi người. Với người khác, dùng cách 2.
+MCP stdio bắt buộc đặt `USER_DIR`; không tự chọn thư mục mặc định khi thiếu biến này. Với triển khai thủ công, mỗi người cần thư mục, token và port riêng.
 
 ### Cách 2: qua HTTPS + token (cho từng người, dùng được trên web và điện thoại)
 

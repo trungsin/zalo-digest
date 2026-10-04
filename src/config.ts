@@ -4,6 +4,14 @@ import path from "node:path";
 // Each person has their own folder (users/<name>/) holding .env and data/.
 // USER_DIR picks the folder; without it the repo root is used (single-user setup).
 const userDir = path.resolve(process.env.USER_DIR ?? ".");
+const portalScoped = process.env.PORTAL_SCOPED === "1";
+const portalToken = process.env.PORTAL_MCP_TOKEN;
+const portalUser = process.env.PORTAL_USERNAME;
+const portalAccountId = process.env.PORTAL_ACCOUNT_ID;
+const expectedZaloUid = process.env.PORTAL_EXPECTED_ZALO_UID;
+if (portalScoped && (!process.env.USER_DIR || !portalToken || portalToken.length < 32 || !portalAccountId || !portalUser)) {
+  throw new Error("Portal worker requires an explicit account directory, identity and MCP token");
+}
 dotenv.config({ path: path.join(userDir, ".env"), override: true, quiet: true });
 
 function list(value: string | undefined): string[] {
@@ -25,10 +33,14 @@ const DEFAULT_MODELS: Record<LlmProvider, string> = {
   claude: "claude-haiku-4-5",
 };
 
-const dataDir = path.resolve(userDir, process.env.DATA_DIR ?? "data");
+const dataDir = path.resolve(userDir, portalScoped ? "data" : process.env.DATA_DIR ?? "data");
 
 export const config = {
-  userName: process.env.USER_NAME ?? path.basename(userDir),
+  userDir,
+  portalScoped,
+  portalAccountId,
+  expectedZaloUid: portalScoped ? expectedZaloUid : undefined,
+  userName: portalScoped ? portalUser! : process.env.USER_NAME ?? path.basename(userDir),
   dataDir,
   dbPath: path.join(dataDir, "zalo.db"),
   credentialsPath: path.join(dataDir, "credentials.json"),
@@ -64,7 +76,7 @@ export const config = {
 
   // MCP server (phase 4). Enabled when MCP_TOKEN is set; one port per person.
   mcpPort: Number(process.env.MCP_PORT ?? 3100),
-  mcpToken: process.env.MCP_TOKEN?.trim() ?? "",
+  mcpToken: portalScoped ? portalToken! : process.env.MCP_TOKEN?.trim() ?? "",
 
   // Optional: email alert when the Zalo session dies (we can't alert via Zalo then).
   smtpUrl: process.env.SMTP_URL,
