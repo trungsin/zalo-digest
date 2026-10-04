@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenAI } from "@google/genai";
+import { FinishReason, GoogleGenAI, type GenerateContentResponse } from "@google/genai";
 import { config } from "./config.js";
 
 type JsonSchema = Record<string, unknown>;
@@ -41,8 +41,8 @@ async function callClaude(system: string, user: string, schema?: JsonSchema): Pr
   if (response.stop_reason === "refusal") {
     throw new Error(`Claude refused: ${JSON.stringify(response.stop_details)}`);
   }
-  if (response.stop_reason === "max_tokens") {
-    throw new Error("Claude response truncated (max_tokens)");
+  if (response.stop_reason === "max_tokens" || response.stop_reason === "model_context_window_exceeded") {
+    throw new Error(`Claude response truncated (${response.stop_reason})`);
   }
   const text = response.content
     .flatMap((block) => (block.type === "text" ? [block.text] : []))
@@ -64,9 +64,23 @@ async function callGemini(system: string, user: string, schema?: JsonSchema): Pr
     },
   });
 
+  return geminiText(response);
+}
+
+type GeminiResponse = Pick<GenerateContentResponse, "text" | "candidates" | "promptFeedback">;
+
+/**
+ * Text of a Gemini response. A reply cut off by the output token limit is rejected rather than
+ * returned, so a half-written report is never sent and the report window stays open for a retry.
+ */
+export function geminiText(response: GeminiResponse): string {
+  const finishReason = response.candidates?.[0]?.finishReason;
+  if (finishReason === FinishReason.MAX_TOKENS) {
+    throw new Error("Gemini response truncated (finishReason MAX_TOKENS)");
+  }
   const text = response.text;
   if (!text?.trim()) {
-    const reason = response.promptFeedback?.blockReason ?? response.candidates?.[0]?.finishReason;
+    const reason = response.promptFeedback?.blockReason ?? finishReason;
     throw new Error(`Empty Gemini response (reason: ${reason ?? "unknown"})`);
   }
   return text;

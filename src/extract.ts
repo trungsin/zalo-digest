@@ -108,10 +108,11 @@ function line(m: StoredMessage, label: string): string {
   return `${label}[${dayKey(m.ts)} ${localIso(m.ts).slice(11, 16)}] ${who}${m.mentions_me ? " (@bạn)" : ""}: ${m.text}`;
 }
 
-function formatOpenTasks(tasks: Task[]): string {
+/** Open tasks for the prompt. `tasks` is sorted by deadline ascending, so the head holds the most urgent ones. */
+export function formatOpenTasks(tasks: Task[]): string {
   if (!tasks.length) return "(không có)";
   return tasks
-    .slice(-MAX_OPEN_TASKS_IN_PROMPT)
+    .slice(0, MAX_OPEN_TASKS_IN_PROMPT)
     .map((t) => `id ${t.id} | ${t.kind} | ${t.assignee} | ${t.title} | hạn: ${t.due_at ? localIso(t.due_at) : "không"} | nhóm: ${groupName(t.group_id)}`)
     .join("\n");
 }
@@ -120,6 +121,28 @@ function parseDue(iso: string): number | null {
   if (!iso) return null;
   const ts = Date.parse(iso);
   return Number.isNaN(ts) ? null : ts;
+}
+
+/**
+ * Apply LLM task updates. `snapshot` is the task list read before the LLM call; each write is
+ * conditional on the task still having its snapshot status, so a change the user made while the
+ * model was running (e.g. "xong 3") is never overwritten.
+ */
+export function applyTaskUpdates(updates: Extraction["updates"], snapshot: Task[]): void {
+  const statusById = new Map(snapshot.map((t) => [t.id, t.status]));
+  for (const u of updates) {
+    const expected = statusById.get(u.task_id);
+    if (expected === undefined) continue;
+    const due = parseDue(u.new_due_at);
+    updateTask(
+      u.task_id,
+      {
+        status: u.status,
+        ...(due !== null && { due_at: due, due_text: u.new_due_text?.trim() ?? "" }),
+      },
+      expected,
+    );
+  }
 }
 
 async function extractBatch(batch: (StoredMessage & { rowid: number })[], now: number): Promise<void> {
@@ -168,15 +191,7 @@ async function extractBatch(batch: (StoredMessage & { rowid: number })[], now: n
     });
   }
 
-  const openIds = new Set(open.map((t) => t.id));
-  for (const u of result.updates ?? []) {
-    if (!openIds.has(u.task_id)) continue;
-    const due = parseDue(u.new_due_at);
-    updateTask(u.task_id, {
-      status: u.status,
-      ...(due !== null && { due_at: due, due_text: u.new_due_text?.trim() ?? "" }),
-    });
-  }
+  applyTaskUpdates(result.updates ?? [], open);
 
   for (const m of result.metrics ?? []) {
     const source = ids.get(m.msg);

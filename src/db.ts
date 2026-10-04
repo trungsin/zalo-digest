@@ -69,6 +69,23 @@ db.exec(`
   );
 `);
 
+// Report window cursors. The report closes its window by message rowid; databases written before that
+// only carry the timestamp watermark, so the first time the rowid cursor is missing we record the
+// current max rowid as a baseline. Anything ingested after it belongs to the transition report no
+// matter how old its timestamp is. Captured here, at DB open, before the recorder can ingest anything.
+export const LAST_REPORT_ROWID_KEY = "last_report_rowid";
+export const REPORT_ROWID_BASELINE_KEY = "report_rowid_baseline";
+
+/** Record the rowid baseline once, while the report has no rowid cursor yet. Idempotent. */
+export function captureReportRowidBaseline(): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO kv (key, value)
+     SELECT ?, CAST(COALESCE(MAX(rowid), 0) AS TEXT) FROM messages
+     WHERE NOT EXISTS (SELECT 1 FROM kv WHERE key = ?)`,
+  ).run(REPORT_ROWID_BASELINE_KEY, LAST_REPORT_ROWID_KEY);
+}
+captureReportRowidBaseline();
+
 export type StoredMessage = {
   msg_id: string;
   group_id: string;
@@ -112,6 +129,25 @@ export function messagesBetween(fromTs: number, toTs: number): StoredMessage[] {
 
 export type StoredMessageWithRowid = StoredMessage & { rowid: number };
 
+/** Highest message rowid stored so far (0 when empty): a snapshot of "everything ingested until now". */
+export function maxMessageRowid(): number {
+  const row = db.prepare("SELECT MAX(rowid) AS r FROM messages").get() as { r: number | null };
+  return row.r ?? 0;
+}
+
+/**
+ * Messages up to `upToRowid` that were ingested after `afterRowid` or, when `orSinceTs` is given,
+ * were sent at or after it; ordered by group then sent time. The rowid part follows ingestion order,
+ * so a message that arrives late with an old timestamp still lands in the next report.
+ */
+export function messagesIngestedBetween(afterRowid: number, upToRowid: number, orSinceTs: number | null): StoredMessage[] {
+  return db
+    .prepare(
+      `SELECT * FROM messages WHERE rowid <= ? AND (rowid > ? ${orSinceTs === null ? "" : "OR ts >= ?"}) ORDER BY group_id, ts`,
+    )
+    .all(upToRowid, afterRowid, ...(orSinceTs === null ? [] : [orSinceTs])) as StoredMessage[];
+}
+
 /** Messages in insertion order after a rowid cursor (robust to late-arriving old messages). */
 export function messagesAfterRowid(rowid: number, limit: number): StoredMessageWithRowid[] {
   return db
@@ -150,16 +186,29 @@ export function insertTask(t: Pick<Task, "group_id" | "source_msg_id" | "kind" |
   `).run({ ...t, now });
 }
 
-export function updateTask(id: number, fields: Partial<Pick<Task, "status" | "due_at" | "due_text">>): boolean {
+/**
+ * Update a task. With `expectedStatus`, the write only happens while the stored status still equals it
+ * (compare-and-set), so a slow writer such as the LLM extractor cannot clobber a status the user changed
+ * in the meantime. Returns whether a row was written.
+ */
+export function updateTask(
+  id: number,
+  fields: Partial<Pick<Task, "status" | "due_at" | "due_text">>,
+  expectedStatus?: Task["status"],
+): boolean {
   const current = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Task | undefined;
   if (!current) return false;
+  if (expectedStatus !== undefined && current.status !== expectedStatus) return false;
   const next = { ...current, ...fields };
   // A new deadline deserves a new reminder.
   const remindedAt = next.due_at !== current.due_at ? null : current.reminded_at;
-  db.prepare(
-    "UPDATE tasks SET status = ?, due_at = ?, due_text = ?, reminded_at = ?, updated_at = ? WHERE id = ?",
-  ).run(next.status, next.due_at, next.due_text, remindedAt, Date.now(), id);
-  return true;
+  const sql = "UPDATE tasks SET status = ?, due_at = ?, due_text = ?, reminded_at = ?, updated_at = ? WHERE id = ?";
+  const values = [next.status, next.due_at, next.due_text, remindedAt, Date.now(), id];
+  // The status guard sits in the WHERE clause too, so a writer in another process is also respected.
+  const result = expectedStatus === undefined
+    ? db.prepare(sql).run(...values)
+    : db.prepare(`${sql} AND status = ?`).run(...values, expectedStatus);
+  return Number(result.changes) > 0;
 }
 
 export function openTasks(): Task[] {

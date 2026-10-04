@@ -1,5 +1,8 @@
 import { config } from "./config.js";
-import { getKv, groupName, messagesBetween, setKv, type StoredMessage } from "./db.js";
+import {
+  getKv, groupName, LAST_REPORT_ROWID_KEY, maxMessageRowid, messagesIngestedBetween, REPORT_ROWID_BASELINE_KEY, setKv,
+  type StoredMessage,
+} from "./db.js";
 import { complete } from "./llm.js";
 import { extractNew } from "./extract.js";
 import { metricSection } from "./metrics.js";
@@ -61,13 +64,38 @@ function buildTranscript(messages: StoredMessage[]): string {
 }
 
 /**
+ * Messages for the next report and a callback that closes the window.
+ * The window is closed by ingestion order (rowid), not by sent time: a message recorded after the
+ * previous report but carrying an older timestamp (late delivery, reconnect backfill) still lands in
+ * this report instead of being skipped forever. Without a rowid cursor (first run, or a database from
+ * before the cursor existed) the window is everything ingested after the baseline captured at DB open
+ * plus messages sent since the saved/24h timestamp; messages stored before that baseline stay
+ * best-effort on the timestamp bound.
+ */
+export function reportWindow(now = Date.now()): { fromTs: number; messages: StoredMessage[]; markReported: () => void } {
+  const fromTs = Number(getKv(LAST_REPORT_KEY) ?? now - DAY_MS);
+  const savedRowid = Number(getKv(LAST_REPORT_ROWID_KEY) ?? NaN);
+  const upToRowid = maxMessageRowid();
+  let messages: StoredMessage[];
+  if (Number.isInteger(savedRowid)) {
+    messages = messagesIngestedBetween(savedRowid, upToRowid, null);
+  } else {
+    const baseline = Number(getKv(REPORT_ROWID_BASELINE_KEY) ?? NaN);
+    messages = messagesIngestedBetween(Number.isInteger(baseline) ? baseline : upToRowid, upToRowid, fromTs);
+  }
+  const markReported = () => {
+    setKv(LAST_REPORT_ROWID_KEY, String(upToRowid));
+    setKv(LAST_REPORT_KEY, String(now));
+  };
+  return { fromTs, messages, markReported };
+}
+
+/**
  * Build the report for messages since the last report (or the past 24h on first run).
  * Call `markReported` only after the report is delivered, so a failed send is retried next time.
  */
 export async function buildReport(now = Date.now()): Promise<{ text: string; markReported: () => void }> {
-  const fromTs = Number(getKv(LAST_REPORT_KEY) ?? now - DAY_MS);
-  const messages = messagesBetween(fromTs, now);
-  const markReported = () => setKv(LAST_REPORT_KEY, String(now));
+  const { fromTs, messages, markReported } = reportWindow(now);
 
   try {
     await extractNew(now);

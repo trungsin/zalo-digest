@@ -15,8 +15,11 @@ function taskLine(t: Task, now: number): string {
   return `#${t.id}${who} ${t.title}${due} · ${groupName(t.group_id)}`;
 }
 
-/** Deterministic task section for the morning report. */
-export function taskSection(now = Date.now()): string {
+/**
+ * Deterministic task section. The morning report keeps "mine" to the coming week; the list command
+ * passes `includeLater` so tasks due after that are listed too instead of looking like nothing is open.
+ */
+export function taskSection(now = Date.now(), { includeLater = false } = {}): string {
   const open = openTasks();
   if (!open.length) return "";
 
@@ -33,6 +36,7 @@ export function taskSection(now = Date.now()): string {
     ...block("Hôm nay", mine.filter((t) => t.due_at !== null && t.due_at >= now && dayKey(t.due_at) === today)),
     ...block("7 ngày tới", mine.filter((t) => t.due_at !== null && dayKey(t.due_at) !== today && t.due_at >= now && t.due_at <= weekAhead)),
     ...block("Chưa có hạn", mine.filter((t) => t.due_at === null).slice(-10)),
+    ...(includeLater ? block("Sau 7 ngày", mine.filter((t) => t.due_at !== null && t.due_at > weekAhead)) : []),
   ];
   const parts = [];
   if (lines.length) parts.push(["VIỆC CỦA BẠN", ...lines].join("\n"));
@@ -40,6 +44,11 @@ export function taskSection(now = Date.now()): string {
   if (!parts.length) return "";
   parts.push('Nhắn "xong 3" / "huy 3" vào Cloud của tôi để cập nhật, "viec" để xem danh sách, "solieu" để xem số liệu tháng.');
   return parts.join("\n\n");
+}
+
+/** Reply to the "viec" command: every open task, including those due more than a week out. */
+export function taskListReply(now = Date.now()): string {
+  return taskSection(now, { includeLater: true }) || "Không có việc nào đang mở.";
 }
 
 // ---------------------------------------------------------------- reminders
@@ -86,7 +95,7 @@ export async function handleCommand(api: API, message: Message): Promise<boolean
   }
 
   if (LIST_COMMAND.test(text)) {
-    await sendToSelf(api, taskSection() || "Không có việc nào đang mở.");
+    await sendToSelf(api, taskListReply());
     return true;
   }
 
