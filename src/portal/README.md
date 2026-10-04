@@ -28,9 +28,11 @@ cùng đăng nhập một tài khoản Zalo. Tối đa 20 tài khoản được 
 Không bật log URL MCP trên reverse proxy: URL chứa token cá nhân.
 MCP có tool `zalo_send_to_self` gửi văn bản vào Cloud của tôi của chính tài khoản
 đang kết nối, dùng lại phiên Zalo của worker; tối đa 10.000 ký tự mỗi lần gọi.
+Người nhận Cloud được lấy từ `loginInfo.send2me_id`, khác ID tài khoản Zalo.
+Lần gọi chỉ báo thành công sau khi API Zalo trả ID tin nhắn cho mọi phần nội dung.
 Để thu hồi quyền MCP của một tài khoản: dừng portal, đổi token trong portal.db
 và trong `.env` tương ứng bằng cùng token ngẫu nhiên 32 byte, rồi khởi động lại.
 Nếu thay hostname, sửa `PORTAL_ORIGIN` và restart; URL MCP hiển thị sẽ theo host mới.
 
 Kiểm tra HTTP và phạm vi MCP:
-`node --import tsx --test tests/portal.test.ts tests/mcp-scope.test.ts`.
+`node --import tsx --test tests/portal.test.ts tests/mcp-scope.test.ts tests/mcp-send.test.ts tests/zalo-self.test.ts`.

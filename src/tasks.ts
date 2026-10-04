@@ -3,7 +3,7 @@ import { config } from "./config.js";
 import { getKv, getTask, groupName, markReminded, openTasks, setKv, tasksToRemind, updateTask, type Task } from "./db.js";
 import { dayKey, formatDue, localHour } from "./time.js";
 import { monthToDateSection } from "./metrics.js";
-import { sendToSelf } from "./zalo.js";
+import { selfThreadId, sendToSelf } from "./zalo.js";
 
 // ---------------------------------------------------------------- formatting
 
@@ -76,7 +76,7 @@ const METRICS_COMMAND = /^(số ?liệu|so ?lieu)$/i;
 /** Handle commands the owner types into their own Cloud thread. Returns true if handled. */
 export async function handleCommand(api: API, message: Message): Promise<boolean> {
   if (message.type !== ThreadType.User || !message.isSelf) return false;
-  if (message.data.idTo !== api.getOwnId()) return false;
+  if (message.data.idTo !== selfThreadId(api)) return false;
   if (typeof message.data.content !== "string") return false;
   const text = message.data.content.trim();
 

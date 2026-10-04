@@ -53,10 +53,21 @@ export async function login(): Promise<API> {
   });
 }
 
-/** Send text to "Cloud của tôi" (the account's own thread), split into chunks. */
+/** Zalo assigns Cloud a separate recipient ID in the authenticated login response. */
+export function selfThreadId(api: Pick<API, "getContext">): string {
+  const id = api.getContext().loginInfo?.send2me_id;
+  if (typeof id !== "string" || !/^[1-9]\d*$/.test(id)) {
+    throw new Error("Phiên Zalo chưa có ID Cloud của tôi. Vui lòng kết nối lại Zalo.");
+  }
+  return id;
+}
+
+/** Send text to "Cloud của tôi", split into chunks. Never use the account UID as recipient. */
 export async function sendToSelf(api: API, text: string): Promise<void> {
+  const threadId = selfThreadId(api);
   for (const chunk of splitText(text, MAX_CHUNK)) {
-    await api.sendMessage(chunk, api.getOwnId(), ThreadType.User);
+    const result = await api.sendMessage(chunk, threadId, ThreadType.User);
+    if (!result.message?.msgId) throw new Error("Zalo chưa xác nhận ID tin nhắn đã gửi.");
   }
 }
 

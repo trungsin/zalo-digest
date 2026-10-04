@@ -29,7 +29,7 @@ Claude trong app của bạn làm phần đọc và phân tích, nên dùng gói
 
 Tool gửi tin có trên MCP HTTPS của dịch vụ đang đăng nhập Zalo, dùng lại phiên đang chạy. Ví dụ: "Gửi bản tóm tắt này vào Cloud Zalo của tôi". Gọi lại sẽ gửi thêm một bản; nếu lỗi hãy kiểm tra Cloud trước khi thử lại vì một phần có thể đã gửi. MCP stdio qua SSH chỉ đọc dữ liệu/cập nhật việc, chưa có tool gửi tin.
 
-Tình trạng kiểm tra thực tế: MCP nhận được tool, nhưng lần gửi thử vào Cloud của tài khoản portal đang trả mã lỗi Zalo 114. Chưa xác minh gửi thành công trên tài khoản này.
+Đã kiểm tra gửi thành công qua MCP trên tài khoản portal. Cloud có ID riêng `send2me_id` trong phiên đăng nhập; dùng ID tài khoản (`getOwnId()`) làm người nhận có thể gây lỗi Zalo 114. Nếu phiên không có ID Cloud, cần kết nối lại Zalo; ứng dụng không tự chuyển sang người nhận khác.
 
 ### Cách 1: qua SSH (chỉ dành cho chủ VPS)
 
